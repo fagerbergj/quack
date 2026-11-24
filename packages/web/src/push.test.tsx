@@ -69,6 +69,7 @@ test('turning notifications on subscribes and stores the subscription on the ser
   vi.stubGlobal('Notification', { permission: 'default', requestPermission: async () => 'granted' });
   Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration: async () => ({ pushManager }) } });
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === 'models') return new Response(JSON.stringify({ models: [] }));
     if (url === 'push/subscribe') stored.push(JSON.parse(String(init?.body)));
     return new Response(JSON.stringify({ publicKey: 'BAAA' }));
   });

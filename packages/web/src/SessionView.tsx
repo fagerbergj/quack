@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperti
 import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
+import { ModelPicker } from './ModelPicker.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -168,6 +169,7 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => composerKeyDown(e, setInput)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="field-grow max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
+        <ModelPicker sessionKey={sessionKey} />
         {busy && empty ? (
           <button type="button" onClick={stop} disabled={state !== 'open' || stopping} aria-busy={stopping} aria-label="Stop" title={queued.length ? 'Stop this run; queued messages still send' : 'Stop this run'} className={btn}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>

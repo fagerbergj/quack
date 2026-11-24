@@ -7,7 +7,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { SetTimer } from '@earendil-works/pi-durable';
 import { failedRows, Failures, retryEngineBusy } from '@quack/sdk';
-import { MODEL_OUTAGE_HOURS, openSession, outageHoursOf } from '../src/index.ts';
+import { agentSpec, MODEL_OUTAGE_HOURS, openSession, outageHoursOf, parseDefinition, parseDeployment } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-outage-'));
 after(() => rm(root, { recursive: true, force: true }));
@@ -160,4 +160,22 @@ test('a runtime takes QUACK_MODEL_OUTAGE_HOURS over the deployment window, and t
   assert.equal(outageHoursOf({ modelOutageHours: 2 }, {}), 2);
   assert.equal(outageHoursOf({ modelOutageHours: 2 }, { QUACK_MODEL_OUTAGE_HOURS: '0.1' }), 0.1);
   for (const bad of ['0', 'six', 'Infinity']) assert.throws(() => outageHoursOf({}, { QUACK_MODEL_OUTAGE_HOURS: bad }), /QUACK_MODEL_OUTAGE_HOURS must be/);
+});
+
+test('a session whose own pick is on another provider than its agent\'s waits on, and names, the picked provider', async () => {
+  const clock = new Clock();
+  const [agentSide, picked] = [fauxProvider({ provider: 'agent-side', models: [{ id: 'a' }] }), fauxProvider({ provider: 'picked', models: [{ id: 'p' }] })];
+  picked.setResponses([...OUTAGE, fauxAssistantMessage('Paris')]);
+  const models = createModels();
+  for (const f of [agentSide, picked]) models.setProvider(retryEngineBusy(f.provider));
+  const deployment = parseDeployment({ providers: { 'agent-side': { baseUrl: 'http://a/v1', models: { a: { contextWindow: 4096 } } }, picked: { baseUrl: 'http://p/v1', models: { p: { contextWindow: 4096 } } } } });
+  const def = parseDefinition({ name: 'x', version: 1, model: 'agent-side/a', extensions: {} }, deployment, {}, undefined, { session: 'picked/p' });
+  const spec = await agentSpec(def, {});
+  const session = await openSession({ dir: join(root, 'picked'), models, agent: spec, now: clock.now, setTimer: clock.setTimer, outageHours: MODEL_OUTAGE_HOURS });
+  await session.submit('Capital of France?', 'q1');
+  assert.ok(await clock.until(async () => picked.state.callCount >= 3, HOUR));
+  assert.equal((await session.standing()).waiting?.provider, 'picked');
+  assert.equal(agentSide.state.callCount, 0, 'the agent\'s own provider is never called');
+  assert.ok(await clock.until(async () => (await session.messages(10)).some((m) => m.text === 'Paris'), 2 * HOUR));
+  await session.close();
 });

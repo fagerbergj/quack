@@ -109,6 +109,20 @@ A session runs on the copy it was pinned to, except its `model` and its judge se
 
 The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
 
+## Session models
+
+A session runs the first of these that is set: its own pick, its agent's `model`, the Settings default, the deployment's `defaultModel`, then the first available model. A pick or Settings default that is no longer available is skipped with a warning. The deployment's `defaultModel` is optional, so a fresh install runs from `QUACK_DATA_DIR` alone.
+
+The available models are every model with a context window that a provider's `GET {baseUrl}/models` lists or the deployment writes by hand, without the decision-model (`systemone`) providers. A provider that cannot list offers only its hand-written ones.
+
+- `GET /models` returns `{ models: [{ name, contextWindow, images?, reasoning? }], defaultModel }`. Here `name` is `provider/model`, and `defaultModel` is what a session runs when neither it nor its agent names a model.
+- `GET /settings` and `PATCH /settings` with `{ "defaultModel": "provider/model" | null }` read and set the Settings default. It is kept in `settings.json` in the data dir.
+- `PATCH /sessions/{key}` with `{ "model": "provider/model" | null }` sets or clears the session's pick. `GET /sessions/{key}` returns the pick as `model`. A model that is not available is refused with 400, which names the ones that are.
+
+The pick is stored in the session dir, beside `agent` and outside the pinned `agent-def` snapshot, so setting it never changes the pin. It applies from the session's next run. An idle process restarts at once. A busy one restarts once its run ends, so a run already going keeps its model. A new Settings default reaches a running session when its process next starts. The capacity gate is the chosen model's provider's.
+
+The judge's and extensions' own models (`judgeModel`, `decisionModel` and the like in their settings) are not affected.
+
 ## Sessions API change stream
 
 `GET /sessions:watch` is a `text/event-stream` that says which sessions changed, so a client re-reads them through the list API instead of polling. It reads as `GET /sessions` does: a person or the tailnet, or a session credential with the cross-session grant (otherwise 404).

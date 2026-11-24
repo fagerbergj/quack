@@ -97,6 +97,16 @@ export const renameSession = (key: string, title: string) => housekeep(base(key)
 // Unarchiving returns the session to stopped; the server refuses to archive a running one.
 export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { state: archived ? 'archived' : 'stopped' });
 export const deleteSession = async (key: string) => void (await json(await fetch(base(key), { method: 'DELETE' })));
+
+/** A model a session may run: `name` is provider/model. */
+export type ModelInfo = { name: string; contextWindow?: number; images?: boolean; reasoning?: boolean };
+/** The available models, and `defaultModel`, what a session runs when neither it nor its agent names one. */
+export const listModels = async () => json<{ models: ModelInfo[]; defaultModel?: string }>(await fetch('models'));
+/** The session's own pick, which applies from its next run; undefined when it has none. */
+export const getSessionModel = async (key: string) => (await json<{ model?: string }>(await fetch(base(key)))).model;
+export const setSessionModel = (key: string, model: string | null) => housekeep(base(key), 'PATCH', { model });
+export const getSettings = async () => json<{ defaultModel?: string }>(await fetch('settings'));
+export const setDefaultModel = (model: string | null) => housekeep('settings', 'PATCH', { defaultModel: model });
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
 export const exportUrl = (key: string) => `${base(key)}/export`;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));

@@ -8,7 +8,7 @@ import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, isRetryableAssistantError } from '@earendil-works/pi-ai';
 import { gate } from '@quack/sdk';
-import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, withCurrentExtensions, type Catalog } from '../src/index.ts';
+import { agentSpec, availableModels, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, readModelChoice, referencedProviders, resolveDeployment, resolveExtensions, resolveModel, withCurrentExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
   defaultModel: 'local/qwen3.8-27b',
@@ -32,7 +32,7 @@ test('reports every problem in a deployment at once', () => {
     () => parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: 'ftp://x', models: { m: { contextWindow: 0 } } } } }),
     (err: Error) => /baseUrl must be an http\(s\) URL/.test(err.message) && /models\.m\.contextWindow must be a positive integer/.test(err.message),
   );
-  assert.throws(() => parseDeployment({}), (err: Error) => /providers must be an object/.test(err.message) && /defaultModel must be/.test(err.message));
+  assert.throws(() => parseDeployment({ defaultModel: 'no-slash' }), (err: Error) => /providers must be an object/.test(err.message) && /defaultModel must be/.test(err.message));
 });
 
 test('reports every problem in a definition at once, naming the available extensions', () => {
@@ -297,7 +297,7 @@ test('a missing requirement or a cycle fails the definition with a clear message
 
 test('the root is closed: a removed or misspelled top-level key is rejected and named', () => {
   for (const key of ['imageModel', 'defualtModel']) assert.throws(() => parseDeployment({ ...deployment, [key]: 'local/omni' }), new RegExp(`unknown top-level key ${key}`));
-  assert.throws(() => parseDeployment({ ...deployment, defaultModel: undefined }), /defaultModel must be "provider\/model"/);
+  assert.throws(() => parseDeployment({ ...deployment, defaultModel: 7 }), /defaultModel must be "provider\/model"/);
   assert.throws(() => parseDeployment({ ...deployment, providers: {} }), /at least one provider/);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 0 } } }), /providers\.local\.capacity must be a positive integer/);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
@@ -390,4 +390,48 @@ test('the same old-shaped content still loads as a pinned snapshot, which parseD
   } finally {
     quiet.mock.restore();
   }
+});
+
+const two = { providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 }, b: { contextWindow: 8192 } } }, clef: { baseUrl: 'http://clef/v1', api: 'systemone' as const, models: { clef: { contextWindow: 8192 } } } } };
+
+test('the available models are the selectable discovered and hand-written ones, decision models left out', async () => {
+  const resolved = await resolveDeployment(parseDeployment(two), listing([{ id: 'c', meta: { n_ctx: 2048 } }, { id: 'ids-only' }]));
+  assert.deepEqual(availableModels(resolved).map((m) => m.name), ['local/c', 'local/a', 'local/b']);
+  const warn = mock.method(console, 'error', () => {});
+  const down = (async () => { throw new Error('refused'); }) as unknown as typeof fetch;
+  assert.deepEqual(availableModels(await resolveDeployment(parseDeployment(two), down)).map((m) => m.name), ['local/a', 'local/b'], 'a provider that cannot list offers its hand-written models');
+  warn.mock.restore();
+});
+
+test('a session model resolves: its pick, the agent\'s, the Settings default, the deployment\'s, then the first available', () => {
+  const d = parseDeployment({ ...two, defaultModel: 'local/b' });
+  const bare = parseDeployment(two);
+  assert.equal(resolveModel('local/a', d, { session: 'local/b', default: 'local/a' }), 'local/b');
+  assert.equal(resolveModel('local/a', d, { default: 'local/b' }), 'local/a');
+  assert.equal(resolveModel(undefined, bare, { default: 'local/b' }), 'local/b');
+  assert.equal(resolveModel(undefined, d, {}), 'local/b');
+  assert.equal(resolveModel(undefined, bare, {}), 'local/a', 'no default anywhere: the first available');
+  const warn = mock.method(console, 'error', () => {});
+  assert.equal(resolveModel(undefined, bare, { session: 'local/gone', default: 'local/gone' }), 'local/a', 'a pick or default no longer available is skipped');
+  assert.equal(warn.mock.callCount(), 2);
+  warn.mock.restore();
+  assert.equal(parseDefinition({ name: 'x', version: 1, extensions: {} }, bare, {}, undefined, { session: 'local/b' }).model, 'local/b');
+  assert.throws(() => parseDefinition({ name: 'x', version: 1, extensions: {} }, parseDeployment({ providers: { local: { baseUrl: 'http://x/v1' } } }), {}), /no model is available/);
+});
+
+test('a deployment with no defaultModel loads, and a session start then asks every provider for the first available', async () => {
+  const d = parseDeployment({ providers: { ...two.providers, hosted: { baseUrl: 'http://h/v1' } } });
+  assert.equal(d.defaultModel, undefined);
+  assert.deepEqual(referencedProviders({ name: 'x', version: 1, extensions: {} }, d).sort(), ['clef', 'hosted', 'local']);
+  assert.deepEqual(referencedProviders({ name: 'x', version: 1, extensions: {} }, d, { session: 'hosted/m', default: 'local/a' }).sort(), ['hosted', 'local']);
+  assert.equal((await resolveDeployment(d, listing([]))).defaultModel, undefined);
+});
+
+test('the session\'s pick and the Settings default are read from the session dir', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-choice-'));
+  assert.deepEqual(readModelChoice(dir), {});
+  await writeFile(join(dir, 'model'), 'local/b\n');
+  await writeFile(join(dir, 'default-model'), 'local/a');
+  assert.deepEqual(readModelChoice(dir), { session: 'local/b', default: 'local/a' });
+  await rm(dir, { recursive: true });
 });

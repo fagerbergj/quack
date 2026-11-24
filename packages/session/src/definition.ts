@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createModels, createProvider, envApiKeyAuth, type MutableModels } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
@@ -16,9 +16,9 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy; /** How long a run waits out a failing model endpoint before it ends in error; default 6. */ modelOutageHours?: number };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none, below the Settings default; absent, the first available model. */ defaultModel?: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy; /** How long a run waits out a failing model endpoint before it ends in error; default 6. */ modelOutageHours?: number };
 
-/** Per agent: its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
+/** Per agent: its model as provider/model (parseDefinition resolves it with resolveModel), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
@@ -119,7 +119,7 @@ function rootProblems(raw: Record<string, unknown>): string[] {
   const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => (k === 'services' ? 'unknown top-level key services: it was renamed extensions, and an entry takes only store and settings' : `unknown top-level key ${k}`));
   if (!isObject(raw.providers) || Object.keys(raw.providers).length === 0) problems.push('providers must be an object naming at least one provider');
   else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
-  if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
+  if (raw.defaultModel !== undefined && (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel))) problems.push('defaultModel must be "provider/model"');
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
   problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores), ...catalogProblems(raw.catalog, raw.stores, raw.extensions));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
@@ -161,27 +161,78 @@ async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): P
   }
 }
 
-/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; throws when defaultModel is not selectable (one with a contextWindow).
- * `only` limits discovery to those provider ids (see referencedProviders): the rest keep their hand-written models, and defaultModel is checked only when its provider is among them. */
-export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
+/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; a provider that cannot list keeps its hand-written ones.
+ * `only` limits discovery to those provider ids (see referencedProviders): the rest keep their hand-written models. */
+export async function discoverModels(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
   const wanted = (id: string) => !only || only.includes(id);
   const providers = Object.fromEntries(await Promise.all(Object.entries(deployment.providers).map(async ([id, p]) => {
     const models = wanted(id) ? await discover(id, p, fetchFn) : {};
     for (const [m, l] of Object.entries(p.models ?? {})) models[m] = { ...models[m], ...l };
     return [id, { ...p, models }] as const;
   })));
-  const resolved = { ...deployment, providers };
-  const problem = wanted(splitRef(resolved.defaultModel)[0]) ? modelProblems(resolved.defaultModel, resolved) : [];
+  return { ...deployment, providers };
+}
+
+/** discoverModels, then throws when a defaultModel among the discovered providers is not selectable (one with a contextWindow). */
+export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
+  const resolved = await discoverModels(deployment, fetchFn, only);
+  const ref = resolved.defaultModel;
+  const problem = ref !== undefined && (!only || only.includes(splitRef(ref)[0])) ? modelProblems(ref, resolved) : [];
   if (problem.length) throw new Error(`invalid deployment config:\n- defaultModel: ${problem.join('; ')}`);
   return resolved;
 }
 
-/** The deployment's providers an agent definition names: its model (the default when it names none), and any "provider/model" string or `{ provider }` object in its extension config. */
-export function referencedProviders(definition: unknown, deployment: Pick<DeploymentConfig, 'providers' | 'defaultModel'>): string[] {
+/** The session models a resolved deployment offers, as provider/model: every selectable one, decision-model providers left out. */
+export function availableModels(deployment: DeploymentConfig): Array<{ name: string } & ModelLimits> {
+  return Object.entries(deployment.providers).filter(([, p]) => p.api !== 'systemone').flatMap(([id, p]) =>
+    Object.entries(p.models ?? {}).filter(([, l]) => l.contextWindow).map(([m, l]) => ({ name: `${id}/${m}`, ...l })));
+}
+
+/** What a person chose outside the agent's bundle: the session's own pick and the Settings default, which the distributor writes into the session dir. */
+export type ModelChoice = { session?: string; default?: string };
+/** The session's pick, beside `agent` in the session dir and outside the pinned snapshot, so a pick never changes the pin. */
+export const MODEL_FILE = 'model';
+/** The Settings default as of the process's start; the distributor rewrites it before each start. */
+export const DEFAULT_MODEL_FILE = 'default-model';
+
+export function readModelChoice(dir: string): ModelChoice {
+  const read = (name: string) => {
+    try {
+      return readFileSync(join(dir, name), 'utf8').trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const [session, fallback] = [read(MODEL_FILE), read(DEFAULT_MODEL_FILE)];
+  return { ...(session && { session }), ...(fallback && { default: fallback }) };
+}
+
+/** A session's model: its own pick, the agent's model, the Settings default, the deployment's defaultModel, then the first available.
+ * A pick or Settings default no longer available is skipped with a warning, so a model that left its provider never strands a session. */
+export function resolveModel(agentModel: unknown, deployment: DeploymentConfig, choice: ModelChoice = {}): unknown {
+  const usable = (what: string, ref: string | undefined) => {
+    if (ref === undefined) return false;
+    const problems = modelProblems(ref, deployment);
+    if (problems.length) console.error(`${what} ${ref} is skipped: ${problems.join('; ')}`);
+    return !problems.length;
+  };
+  if (usable('the session\'s model', choice.session)) return choice.session;
+  if (agentModel !== undefined) return agentModel;
+  if (usable('the Settings default model', choice.default)) return choice.default;
+  return deployment.defaultModel ?? availableModels(deployment)[0]?.name;
+}
+
+/** The deployment's providers an agent definition names: every model resolveModel may pick (all providers when none is named, for the first available),
+ * and any "provider/model" string or `{ provider }` object in its extension config. */
+export function referencedProviders(definition: unknown, deployment: Pick<DeploymentConfig, 'providers' | 'defaultModel'>, choice: ModelChoice = {}): string[] {
   const found = new Set<string>();
   const note = (id: unknown) => typeof id === 'string' && Object.hasOwn(deployment.providers, id) && found.add(id);
   const def = isObject(definition) ? definition : {};
-  note(splitRef(typeof def.model === 'string' ? def.model : deployment.defaultModel)[0]);
+  // The defaults below an agent's own model are never reached, so they are not asked.
+  const below = def.model === undefined ? [choice.default, deployment.defaultModel] : [def.model];
+  const named = [choice.session, ...below].filter((m): m is string => typeof m === 'string');
+  for (const m of named) note(splitRef(m)[0]);
+  if (!named.length) Object.keys(deployment.providers).forEach(note);
   const walk = (v: unknown): void => {
     if (typeof v === 'string' && v.includes('/')) note(splitRef(v)[0]);
     else if (Array.isArray(v)) v.forEach(walk);
@@ -195,6 +246,7 @@ export function referencedProviders(definition: unknown, deployment: Pick<Deploy
 }
 
 function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {
+  if (model === undefined) return ['no model is available: name one in the agent, on the Settings page or as the deployment\'s defaultModel, or give a provider a model with a contextWindow'];
   if (typeof model !== 'string' || !model.includes('/')) return ['model must be "provider/model"'];
   const limits = deployment.providers[splitRef(model)[0]]?.models?.[splitRef(model)[1]];
   if (!limits) return [`model ${model} is not configured in this deployment`];
@@ -280,14 +332,14 @@ function extensionProblems(extensions: unknown, deployment: DeploymentConfig, ca
   return [...problems, ...resolveExtensions(Object.keys(extensions), catalog).problems];
 }
 
-/** Validates an agent definition against the deployment and the catalog, reporting every problem at once; `current` is its agent's current bundle (see withCurrentExtensions). */
-export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog, current?: unknown): AgentDefinition {
+/** Validates an agent definition against the deployment and the catalog, reporting every problem at once; `current` is its agent's current bundle (see withCurrentExtensions), `choice` the person's (see resolveModel). */
+export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog, current?: unknown, choice?: ModelChoice): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
   const raw = withCurrentExtensions(withJudge(withDecisionModel(withoutRemoved(input)), catalog), current, catalog);
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
-  const model = raw.model ?? deployment.defaultModel;
+  const model = resolveModel(raw.model, deployment, choice);
   problems.push(...modelProblems(model, deployment));
   // Pinned snapshots are immutable history and may still carry the removed key, so it is ignored, not rejected.
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed and is ignored`);
@@ -379,14 +431,14 @@ export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: 
 }
 
 /** Reads an agent definition file and the prompt file it names (resolved beside it) into an agent spec. */
-export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog, always: DeploymentExtensions = [], current?: unknown): Promise<AgentSpec> {
+export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog, always: DeploymentExtensions = [], current?: unknown, choice?: ModelChoice): Promise<AgentSpec> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
   } catch (err) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const def = parseDefinition(raw, deployment, catalog, current);
+  const def = parseDefinition(raw, deployment, catalog, current, choice);
   const instructions = def.prompt ? readFileSync(resolve(dirname(path), def.prompt), 'utf8') : undefined;
   return { ...(await agentSpec(def, catalog, always)), instructions };
 }

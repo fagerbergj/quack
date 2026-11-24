@@ -14,6 +14,7 @@ import { defaultServices } from './keyed-services.ts';
 import { crossSession, declaredApps, loadManifests } from '@quack/runtime/catalog';
 import { rubricFrom } from './rubrics.ts';
 import { appStream, appsGateway, mountApps } from './apps.ts';
+import { modelRoutes, sessionModels } from './models.ts';
 
 function env(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -31,11 +32,12 @@ const deployment = readDeploymentFile();
 // The catalog's store is the one the deployment file's catalog.store names, otherwise catalog.sqlite in the data dir.
 const catalog = openCatalog({ dataDir, store: catalogStore(deployment) });
 const broker = credentialBroker();
+const models = sessionModels({ dataDir, deployment: parseDeployment(deployment) });
 const manifests = await loadManifests();
 
 // A process that exits, stopped or crashed, is the catalog's stopped; the session cannot report its own end.
 const stopped = (key: string) => void catalog.stopped(key).catch((err) => console.error(`catalog: ${key} stop not recorded:`, err.message));
-const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, proxiedServices: defaultServices, onExit: stopped });
+const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), defaultModel: async () => (await models.settings()).defaultModel, runtime, sessionPort, broker, proxiedServices: defaultServices, onExit: stopped });
 // Before any session starts, so each log has one owner while its stream is seeded.
 await ready;
 const backfilled = await backfillCatalog(catalog, dataDir, priceOf(parseDeployment(deployment)));
@@ -57,8 +59,9 @@ const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string
   // Pushes leave after the ack, so a slow push service never holds a session's channel.
   void push.notify(key, events).catch((err) => console.error('push:', err));
 }) };
-const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
-const server = createDistributor(driver, { refuse, sessions, catalog, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
+const modelsApi = modelRoutes(models);
+const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await modelsApi(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
+const server = createDistributor(driver, { refuse, sessions, catalog, models, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
 // A failed start (an extension finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
 for (const [name, app] of Object.entries(mounted)) {
