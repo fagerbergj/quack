@@ -1,6 +1,6 @@
 {
   "name": "reviewer",
-  "version": 18,
+  "version": 19,
   "status": "promoted",
   "prompt": "prompt.md",
   "extensions": {

@@ -54,9 +54,9 @@ approve | comment | request_changes
 
 Labels are `blocking`, `suggestion`, `nit` and `question`.
 
-- A blocking finding names its anchor in parentheses: `defect` (wrong output, a crash or data loss), `delivery` (a promise not kept), `security`, `design` (a named principle), `scope` (work outside the change's purpose) or `tests` (missing or broken).
-- A finding that describes wrong output that merging the change as it stands would cause is blocking, never a suggestion.
-- An edit to the pull request description, a doc or comment, a follow-up, or tooling polish is not blocking on its own.
+- A finding is blocking only when merging the change as it stands would cause the harm its anchor names. It names its anchor in parentheses: `defect` (wrong output, a crash or data loss), `delivery` (a promise not kept), `security`, `design` (a named principle), `scope` (work outside the change's purpose) or `tests` (missing or broken).
+- A finding that describes wrong output the change causes is blocking, never a suggestion.
+- A nit, an edit to the pull request description, a doc or comment, a follow-up, or tooling polish is not blocking on its own.
 - Preference alone is never blocking.
 - When a finding proposes specific code, show it in a fenced block with a language tag on the lines after the finding.
 

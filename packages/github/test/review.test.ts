@@ -324,6 +324,10 @@ test('blocks_without_consequence names every anchor the reviewer prompt lets a b
   assert.deepEqual(anchors, ['defect', 'delivery', 'security', 'design', 'scope', 'tests']);
   const asked = reviewDeclaration.checks.blocks_without_consequence.question.instructions;
   for (const a of anchors) assert.match(asked, new RegExp(`\\b${a}\\b`), a);
+  assert.match(asked, /as it stands/);
+  assert.match(prompt, /blocking only when merging the change as it stands would cause the harm its anchor names/, 'the prompt carries the -4 bar');
+  for (const k of ['a nit', 'pull request description', 'doc or comment', 'follow-up', 'tooling polish'])
+    assert.ok(prompt.toLowerCase().includes(k) && asked.includes(k.replace('doc or comment', 'doc or a comment')), `the -4 check answers no to ${k}; the prompt must say so`);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {
