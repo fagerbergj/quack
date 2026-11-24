@@ -29,7 +29,7 @@ export type JudgeOptions = {
   declaration: Declaration;
   /** Revise-and-recheck rounds before a failing version may go out with its failures marked: a round judges at most maxRevisions + 1 versions. */
   maxRevisions: number;
-  /** A decision model asked first; uncertain items, and a unit that alone is over its input cap, escalate to the judge model. */
+  /** A decision model asked first; uncertain items, and a unit that alone is over its input cap, escalate to the judge model; while it is unreachable its items stay undecided. */
   decisionModel?: DecisionModelRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
@@ -327,9 +327,9 @@ export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: Seale
   return judgeVersion(api, opts, sealed, ctx, memo);
 }
 
-/** What a caller is told when the judge model could not answer some checks. */
+/** What a caller is told when no model could answer some checks; the judge-health audit greps "gave no usable answer". */
 export function undecidedMessage(ids: string[], toolName: string): string {
-  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again.`;
+  return `The decision model or the judge model gave no usable answer for ${ids.join(', ')} (usually one is at capacity or unreachable), so nothing was scored. Call ${toolName} again.`;
 }
 
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
