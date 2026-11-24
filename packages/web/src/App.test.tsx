@@ -2066,7 +2066,7 @@ describe('the session page as a ledger', () => {
     expect(within(screen.getByRole('list', { name: 'Checks running' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Stays in scopeChecking']);
     const done = screen.getByText('Done · 1 problem · 1 nothing found');
     expect(done.closest('details')).not.toHaveAttribute('open');
-    expect(within(screen.getByRole('list', { name: 'Checks done' })).getByText('Fail')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Checks done' })).getByRole('img', { name: 'Failed' })).toBeInTheDocument();
     expect(screen.queryByText('Waiting for the double-check')).toBeNull();
   });
 });

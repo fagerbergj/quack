@@ -1,5 +1,6 @@
+import { useEffect, useReducer, useRef } from 'react';
 import { checkFailed, type Check, type Verdict } from './api.ts';
-import { CheckRow, type About } from './CheckList.tsx';
+import { byWhom, CheckRow, Mark, type About } from './CheckList.tsx';
 
 export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
 
@@ -34,7 +35,9 @@ export function CheckResult({ verdict, open, summary, about }: { verdict: Verdic
   );
 }
 
-type Live = { checks: Array<Omit<Check, 'met' | 'notes'> & { met?: number | null }> };
+/** A running check's live counts: items settled by resolver, with the judge model now, and not yet answered; absent until the judge sends them. */
+type Counts = { settled?: Record<string, number>; escalating?: number; waiting?: number };
+type Live = { checks: Array<Omit<Check, 'met' | 'notes'> & Counts & { met?: number | null }> };
 
 // What the judge publishes while it runs; anything else (another tool's details) is not a check in progress.
 export function liveChecks(details: unknown): Live['checks'] | undefined {
@@ -46,8 +49,7 @@ export const checkedCount = (checks: Live['checks']) => checks.filter((c) => c.m
 
 type LiveCheck = Live['checks'][number];
 const failedNow = (c: LiveCheck) => c.met !== undefined && checkFailed({ ...c, met: c.met, notes: [] });
-const SEGMENT = (c: LiveCheck) => (c.met === undefined ? 'bg-line' : c.met === null ? 'bg-soft' : failedNow(c) ? 'bg-danger' : 'bg-success');
-const STATE = (c: LiveCheck) => (c.met === undefined ? 'Checking' : c.met === null ? "Didn't apply" : failedNow(c) ? 'Fail' : 'Nothing found');
+const keyOf = (c: LiveCheck) => `${c.criterion}.${c.id}`;
 
 /** How far the double-check has got and what it has found so far; checks are named by the problem they look for. */
 export const progressLabel = (checks: Live['checks']) => {
@@ -61,21 +63,59 @@ const doneSummary = (done: Live['checks']) => {
   return parts.filter(([k]) => k > 0).map(([k, w]) => (w === 'problem' ? `${k} problem${k > 1 ? 's' : ''}` : `${k} ${w}`)).join(' · ');
 };
 
-/** The double-check while it runs: a bar with one segment per check, the checks still running, and each finished one folded away. */
+/** A check with no new answer for this long reads "Waiting…": its items are queued for a model. */
+export const STILL_MS = 120_000;
+const doneOf = (c: LiveCheck) => (c.units ?? 0) - (c.waiting ?? 0) - (c.escalating ?? 0);
+
+// When each running check last gained an answer; a still check sends nothing, so a 15 s tick re-reads the clock.
+function useStill(running: LiveCheck[]): (c: LiveCheck) => boolean {
+  const seen = useRef(new Map<string, { done: number; at: number }>());
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const t = setInterval(tick, 15_000);
+    return () => clearInterval(t);
+  }, []);
+  const now = Date.now();
+  for (const c of running) if (seen.current.get(keyOf(c))?.done !== doneOf(c)) seen.current.set(keyOf(c), { done: doneOf(c), at: now });
+  return (c) => c.waiting !== undefined && now - seen.current.get(keyOf(c))!.at >= STILL_MS;
+}
+
+const pct = (k: number, n: number) => `${(100 * k) / Math.max(n, 1)}%`;
+
+/** One running check: "42/60" over a bar of items settled without the judge model, settled by it, with it now, and waiting. */
+function RunningRow({ c, still }: { c: LiveCheck; still: boolean }) {
+  if (c.waiting === undefined || c.units === undefined) return <li className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className="flex-none text-[11px] text-muted">Checking</span></li>;
+  const [n, now, done, w] = [c.units, c.escalating ?? 0, doneOf(c), byWhom(c.settled)];
+  const parts = [`${done} of ${n} done`, w.clef && `${w.clef} by Clef`, w.judge && `${w.judge} by the judge model`, w.code && `${w.code} by code`, now && `${now} with the judge model now`, c.waiting && `${c.waiting} waiting`];
+  const tip = `${still ? 'No new answer for 2 min. ' : ''}${parts.filter(Boolean).join(', ')}`;
+  return (
+    <li title={tip} aria-label={`${c.label}. ${tip}`} className="grid grid-cols-[1fr_auto] items-baseline gap-x-2.5 gap-y-1 py-1.5">
+      <span aria-hidden="true" className="min-w-0 break-words">{c.label}</span>
+      <span aria-hidden="true" className={`text-[12px] tabular-nums ${still ? 'text-warning' : 'text-muted'}`}>{still ? 'Waiting…' : `${done}/${n}`}</span>
+      <span aria-hidden="true" data-bar className="col-span-2 flex h-1 overflow-hidden rounded-full bg-line">
+        <span className="bg-accent-ink" style={{ width: pct(done - w.judge, n) }} />
+        <span className="bg-info" style={{ width: pct(w.judge, n) }} />
+        <span className="bg-info/40" style={{ width: pct(now, n) }} />
+      </span>
+    </li>
+  );
+}
+
+/** The double-check while it runs: each running check with its count and bar, and the finished ones folded away under their marks. */
 export function CheckProgress({ checks }: { checks: Live['checks'] }) {
   const running = checks.filter((c) => c.met === undefined);
   const done = checks.filter((c) => c.met !== undefined);
+  const still = useStill(running);
   return (
-    <div className="ml-[34px] flex flex-col gap-2 text-[13px]">
-      <div aria-hidden="true" className="flex h-1.5 gap-0.5">{checks.map((c) => <span key={`${c.criterion}.${c.id}`} className={`flex-1 rounded-full ${SEGMENT(c)}`} />)}</div>
+    <div className="ml-[34px] flex flex-col gap-2 text-[13px] max-sm:ml-0">
       <ul aria-label="Checks running" className="m-0 flex list-none flex-col p-0">
-        {running.map((c) => <li key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className="flex-none text-[11px] text-muted">Checking</span></li>)}
+        {running.map((c) => <RunningRow key={keyOf(c)} c={c} still={still(c)} />)}
       </ul>
       {done.length > 0 && (
         <details>
           <summary className="flex min-h-11 cursor-pointer list-none items-center text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden">{`Done · ${doneSummary(done)}`}</summary>
           <ul aria-label="Checks done" className="m-0 flex list-none flex-col p-0">
-            {done.map((c) => <li key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className={`flex-none text-[11px] ${failedNow(c) ? 'text-danger' : 'text-muted'}`}>{STATE(c)}</span></li>)}
+            {done.map((c) => <li key={keyOf(c)} className="flex min-h-8 items-center gap-2"><Mark check={{ ...c, met: c.met!, notes: [] }} /><span className="min-w-0 flex-1 break-words">{c.label}</span></li>)}
           </ul>
         </details>
       )}

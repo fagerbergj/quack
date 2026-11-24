@@ -1,11 +1,37 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import type { Check } from './api.ts';
 import { CheckRow, Note, resolverLine } from './CheckList.tsx';
-import { CheckResult } from './CheckResult.tsx';
+import { CheckProgress, CheckResult, STILL_MS } from './CheckResult.tsx';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+const running = (over: object) => ({ criterion: 'c', id: 'sup', label: 'A claim is not stated', weight: 1, units: 60, ...over });
+
+test('a running check shows how many items are done and a bar of settled by Clef, by the judge model, with it now, and waiting; the breakdown is its tooltip and label', () => {
+  render(<CheckProgress checks={[running({ settled: { clef: 34, 'qwen3.8-flash-next': 6, code: 2 }, escalating: 4, waiting: 14 })]} />);
+  const row = screen.getByRole('listitem', { name: /^A claim is not stated\./ });
+  expect(row).toHaveTextContent('42/60');
+  expect(row).toHaveAttribute('title', '42 of 60 done, 34 by Clef, 6 by the judge model, 2 by code, 4 with the judge model now, 14 waiting');
+  const widths = [...row.querySelector('[data-bar]')!.children].map((s) => (s as HTMLElement).style.width);
+  expect(widths.map((w) => Math.round(parseFloat(w) * 60) / 100)).toEqual([36, 6, 4]);
+});
+
+test('a running check that gains no answer for 2 minutes reads "Waiting…" until its count moves again', () => {
+  vi.useFakeTimers();
+  const { rerender } = render(<CheckProgress checks={[running({ settled: { clef: 10 }, escalating: 2, waiting: 48 })]} />);
+  act(() => vi.advanceTimersByTime(STILL_MS - 15_000));
+  expect(screen.getByText('10/60')).toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(15_000));
+  expect(screen.getByText('Waiting…')).toBeInTheDocument();
+  expect(screen.getByRole('listitem')).toHaveAttribute('title', expect.stringMatching(/^No new answer for 2 min\. 10 of 60 done/));
+  rerender(<CheckProgress checks={[running({ settled: { clef: 11 }, escalating: 2, waiting: 47 })]} />);
+  expect(screen.getByText('11/60')).toBeInTheDocument();
+});
 
 test('a note prefixed with its check scope shows no unit chip', () => {
   render(<Note text="row: too long" scope="row" />);
