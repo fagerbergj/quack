@@ -8,7 +8,7 @@ Closes #
 
 ## Evidence
 
-<!-- What docs/README.md asks for this kind of change: a smoke test for the model path, a judge replay for a rubric, a QA rig run for the UI. -->
+<!-- Optional. Green CI is the bar; add a replay, A/B run or QA rig run here only when you ran one that helps a reviewer decide. -->
 
 ## Checklist
 
