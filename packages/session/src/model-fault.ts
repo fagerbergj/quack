@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { retryDelayMs } from '@earendil-works/pi-ai';
-import { ConversationBusy, LiveDoc, type ConversationRetryPolicy, type LiveState, type Conversation, type Harness } from '@earendil-works/pi-durable';
+import { ConversationBusy, LiveDoc, type ConversationRetryPolicy, type Cursor, type LiveState, type Conversation, type Harness } from '@earendil-works/pi-durable';
 import { Failures, modelWait, transientModelError } from '@quack/sdk';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -56,15 +56,44 @@ function failureText(detail: string | undefined, setup: ModelFaultSetup): string
 
 const brief = (text: string) => (text.length > 200 ? `${text.slice(0, 200)}…` : text);
 
-// A run sleeping in its retry backoff (a failed try, or a host stop mid-answer); `since` is the streak's first failure this process saw.
+// Conversations sleeping in their retry backoff (a failed try, or a host stop mid-answer), merged into one wait: the earliest
+// streak's, a tie to the oldest conversation. `since` is a streak's first failure this process saw.
 function parkedWait(setup: ModelFaultSetup) {
-  let since = 0;
-  return (live: LiveState | undefined) => {
+  const streaks = new Map<string, { since: number; error?: string }>();
+  return (id: string, live: LiveState | undefined) => {
     const g = live?.generation;
-    if (!g?.retry) return modelWait.setDown(null);
-    if (g.attempt === 1 || !since) since = setup.now();
-    modelWait.setDown({ since, ahead: 0, provider: setup.provider, error: brief(g.retry.error) });
+    const streak = streaks.get(id);
+    if (g?.retry) streaks.set(id, { since: g.attempt === 1 || !streak ? setup.now() : streak.since, error: brief(g.retry.error) });
+    else if (!live?.run) streaks.delete(id);
+    else if (streak) delete streak.error;
+    const [first] = [...streaks].filter(([, s]) => s.error !== undefined).sort(([a, x], [b, y]) => x.since - y.since || a.localeCompare(b, 'en', { numeric: true }));
+    modelWait.setDown(first ? { since: first[1].since, ahead: 0, provider: setup.provider, error: first[1].error } : null);
   };
+}
+
+// A subagent's child runs in this harness on the same retry policy, so its park is the session's wait too. One commit observer
+// sees every child's pi.live, made before or after open; a child with no run left drops out.
+async function watchChildren(harness: Harness, root: Conversation, parked: ReturnType<typeof parkedWait>) {
+  const seen = new Set<string>();
+  harness.observeCommits({
+    advance(publication) {
+      for (const c of publication.changes) {
+        if (c.type !== 'document' || c.record.kind !== LiveDoc.definition.kind || !c.conversationId || c.conversationId === root.id) continue;
+        const id = String(c.conversationId);
+        const live = c.kind === 'change' ? (c.value as LiveState) : undefined;
+        seen.add(id);
+        // An observer must not call back into the Session, so the wait is published a microtask later, still in commit order.
+        queueMicrotask(() => parked(id, live));
+      }
+    },
+    end: () => undefined,
+  });
+  let cursor: Cursor | undefined;
+  do {
+    const page = await harness.commit((tx) => tx.scanConversations({}, 100, cursor), ctx);
+    for (const c of page.items) if (c.id !== root.id && !seen.has(String(c.id))) parked(String(c.id), await harness.snapshot(LiveDoc, c.id, ctx));
+    cursor = page.next;
+  } while (cursor);
 }
 
 /** Retries a run a provider abort ended once, and records any other model_error (or a second abort) as a failure so Run again appears.
@@ -73,7 +102,8 @@ export async function watchModelFaults(harness: Harness, root: Conversation, log
   await root.commit(async (tx) => { await tx.doc(LiveDoc, root.id); }, ctx);
   const watch = await harness.watchDoc(LiveDoc, root.id, ctx);
   const parked = parkedWait(setup);
-  parked(watch?.value);
+  parked(String(root.id), watch?.value);
+  await watchChildren(harness, root, parked);
   // A failure present at open is recorded, not retried: a crash after its commit must not leave the session idle with nothing to resume.
   const first = watch?.value?.runFailure;
   let seen = String(first?.taskId ?? '');
@@ -81,7 +111,7 @@ export async function watchModelFaults(harness: Harness, root: Conversation, log
   let retrying = false;
   const onChange = async () => {
     const live = watch?.value;
-    parked(live);
+    parked(String(root.id), live);
     const f = live?.runFailure;
     if (!f) {
       if (!live?.run) retrying = false;
