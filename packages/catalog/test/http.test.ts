@@ -12,7 +12,7 @@ const T0 = Date.parse('2026-11-01T00:00:00Z');
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
+const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string; error?: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
 let base = '';
 let catalog: ReturnType<typeof createCatalog>;
 let route: ReturnType<typeof sessionsApi>;
