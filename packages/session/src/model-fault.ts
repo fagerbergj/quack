@@ -44,7 +44,8 @@ async function setRow(root: Conversation, error: string | null, run = 0) {
   }, ctx);
 }
 
-/** What the session's model endpoint and retry policy are, for the waiting signal and the failure text. */
+/** What the session's model endpoint and retry policy are, for the waiting signal and the failure text. `provider` is the resolved model's
+ * (resolveModel: a session's own pick first), which its subagent children run too, so every parked conversation is labelled with it. */
 export type ModelFaultSetup = { provider: string; retry: ConversationRetryPolicy; now: () => number };
 
 // A transient error that still ended the run used up the whole retry window, so the row says how long it retried.

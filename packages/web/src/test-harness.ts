@@ -15,11 +15,13 @@ export class Fail {
 export const notFound = new Fail(404);
 
 export type Routes = Record<string, unknown>;
-// The build stamp is off unless a test turns it on; its 404 is how the app learns that.
-const OFF: Routes = { 'GET /version': notFound };
+// The build stamp is off unless a test turns it on; its 404 is how the app learns that. No models hides the composer's picker.
+const OFF: Routes = { 'GET /version': notFound, 'GET /models': { models: [] }, 'GET /settings': {} };
 // A session's own meta answers empty, and an extension's service is not connected, unless a test routes them.
 const QUIET = /^GET \/sessions\/[^/?]+\/meta$/;
 const APP = /^GET \/apps\//;
+// A session's own row, which the model picker reads for the session's pick.
+const ROW = /^GET \/sessions\/[^/?]+$/;
 
 /** The answers for this test; a test adds or deletes entries in place. */
 export const routes: Routes = {};
@@ -46,6 +48,7 @@ export const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (hit !== undefined) return reply(typeof hit === 'function' ? hit(url) : hit);
   if (QUIET.test(route)) return reply({ [route.split('/').at(-1)!]: [] });
   if (APP.test(route)) return reply(notFound);
+  if (ROW.test(route)) return reply({});
   unexpected.push(route);
   return reply(notFound);
 });

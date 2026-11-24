@@ -10,6 +10,7 @@ import { PRINCIPAL_HEADER, principalHeader, unrefTimer, type SetTimer } from '@q
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
+import { modelRoutes, type SessionModels } from './models.ts';
 
 export const { readBody, send, json } = serviceHttp();
 
@@ -67,7 +68,7 @@ async function serveStatic(root: string, pathname: string, req: IncomingMessage,
 async function serveWeb(root: string | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (!root || req.method !== 'GET') return false;
   const { pathname } = new URL(req.url ?? '', 'http://distributor');
-  return !/^\/(sessions|agents|version)(\/|$)/.test(pathname) && serveStatic(root, pathname, req, res);
+  return !/^\/(sessions|agents|version|models|settings)(\/|$)/.test(pathname) && serveStatic(root, pathname, req, res);
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
@@ -161,7 +162,7 @@ function announced<V>(announce: (key: string) => void): Map<string, V> {
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; waiting?: ModelWait | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** The models sessions run: the Sessions API's `model`, and `/models` and `/settings`. */ models?: SessionModels; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? unrefTimer;
   const lastUse = new Map<string, number>();
@@ -178,6 +179,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const wakeTimers = new Map<string, () => void>();
   // Sessions whose busy marker (a wake time of "now") is on disk; written by the sweep so a crash still restarts them.
   const marked = new Set<string>();
+  // Sessions whose model pick changed while their process ran: each restarts once between runs, so its next run starts on the pick.
+  const repicked = new Set<string>();
   // Consecutive failed wakes per session, for the retry backoff and so a failure streak is logged once.
   const wakeFailures = new Map<string, number>();
   let draining = false;
@@ -280,6 +283,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
         if (waiting) waits.set(key, waiting);
         else waits.delete(key);
         await mark(key, status === 'HealthyBusy', wake?.at);
+        if (await restartForPick(key)) continue;
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
         if (status !== 'Healthy' || !idle(key)) continue;
@@ -290,6 +294,18 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
       }
     }
     rewakeLost();
+  }
+
+  // A watching page holds no restart off: its socket reconnects to the new process. True when it stopped the process.
+  async function restartForPick(key: string): Promise<boolean> {
+    if (!repicked.has(key)) return false;
+    if (!driver.running().includes(key)) return repicked.delete(key), false;
+    // A sleep or a run parked in its outage backoff is still a run, so it keeps its model until it ends.
+    const { status, waitingOnHuman, wake, waiting } = await ping(key);
+    if (status !== 'Healthy' || waitingOnHuman || wake?.at !== undefined || waiting?.error) return false;
+    repicked.delete(key);
+    await stopSession(key, wake?.at);
+    return true;
   }
 
   let sweepStop = () => {};
@@ -343,6 +359,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
       admitted = true;
       await mustExist(key, what);
       await switchRole(key, agent, what);
+      if (what === 'POST /invocations') await restartForPick(key).catch(() => false);
       const url = await driver.ensure(key, agent);
       arm(key, undefined);
       await use(url);
@@ -425,6 +442,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     if (live) await driver.stop(key);
     marked.delete(key);
     wakeFailures.delete(key);
+    repicked.delete(key);
     if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
     waits.delete(key);
@@ -459,7 +477,21 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     });
     return out;
   }
-  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer, waiting: (key) => waits.get(key), build, setTimer });
+  async function setModel(key: string, model: string | null) {
+    const why = await opts.models!.setSessionModel(key, model);
+    if (why) return why;
+    repicked.add(key);
+    await maintain(() => restartForPick(key).then(() => {})).catch(() => {});
+  }
+  // The agent's model is its current bundle's, as the runtime reads it at each start.
+  async function modelOf(key: string) {
+    const [model, agent] = await Promise.all([opts.models!.sessionModel(key), driver.agentOf(key)]);
+    const agentModel = (await driver.agents()).find((a) => a.name === agent)?.model;
+    return { model, resolvedModel: await opts.models!.resolved(model, agentModel) };
+  }
+  const picks = opts.models && { model: modelOf, setModel };
+  const modelsApi = opts.models && modelRoutes(opts.models);
+  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer, waiting: (key) => waits.get(key), build, setTimer, ...picks });
 
   // A submission naming another agent changes the session's role if no run is active; an open run, a pending approval or a sleep is still a run.
   // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.
@@ -477,7 +509,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   // `who` is the public caller's principal; a session caller has none, and the session listener lets it reach no route that would read one.
   // The routes the distributor answers itself, before a request is forwarded to a session's process.
   const ownRoute = async (req: IncomingMessage, res: ServerResponse, who: Principal | undefined) =>
-    (!!who && (await api?.(req, res, callerOf(who)))) || (await listing(req, res)) || (await agentRoutes(req, res, who)) || (await opts.routes?.(req, res)) || (await serveWeb(opts.webDir, req, res));
+    (!!who && (await api?.(req, res, callerOf(who)))) || (await listing(req, res)) || (await agentRoutes(req, res, who)) || (!!who && (await modelsApi?.(req, res, who))) || (await opts.routes?.(req, res)) || (await serveWeb(opts.webDir, req, res));
 
   // `service` forwards no principal: an app's in-process call is a service's to the session.
   async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined, service = false) {

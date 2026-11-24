@@ -19,6 +19,7 @@ let promoted: unknown[];
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
   if (url === 'agents') return json({ agents: [{ name: 'reviewer', version: 2, status: 'draft', model: 'local/m', description: 'Reviews PRs.' }, { name: 'quack', version: 1, status: 'promoted' }] });
+  if (url === 'models') return json({ models: [] });
   if (url === 'agents/reviewer/promote') return promoted.push(JSON.parse(String(init?.body))), json({});
   const v = /^agents\/reviewer(?:\?version=(\d+))?$/.exec(url);
   if (v) return json(detail(Number(v[1] ?? 2)));

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BottomBarSetting } from './BottomBarSetting.tsx';
+import { ModelSetting } from './ModelSetting.tsx';
 import { NotificationsSetting } from './NotificationsSetting.tsx';
 import { storedTheme, THEME_KEY } from './Shell.tsx';
 import { shortCommit, useVersion } from './useVersion.ts';
@@ -63,6 +64,7 @@ export function Settings() {
           </label>
         ))}
       </fieldset>
+      <ModelSetting />
       <NotificationsSetting />
       <BottomBarSetting />
       <About />

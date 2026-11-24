@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { SESSION_KEY } from '@quack/catalog';
-import { bundleProblems, CURRENT_AGENT_FILE, childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
+import { bundleProblems, CURRENT_AGENT_FILE, childPort, DEFAULT_MODEL_FILE, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -147,7 +147,7 @@ const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
 // Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host.
-export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor; /** Hears every session process that exits, stopped or crashed. */ onExit?: (key: string) => void }, launch: Launch): HostDriver {
+export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor; /** The Settings default model, written into the session dir before each start. */ defaultModel?: () => Promise<string | undefined>; /** Hears every session process that exits, stopped or crashed. */ onExit?: (key: string) => void }, launch: Launch): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
@@ -260,6 +260,13 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     await cp(from, join(dir, CURRENT_AGENT_FILE));
   }
 
+  // A Settings default changed later reaches a running session at its next start.
+  async function writeDefault(key: string) {
+    const model = await opts.defaultModel?.();
+    const path = join(sessionDir(key), DEFAULT_MODEL_FILE);
+    await (model ? writeFile(path, model) : rm(path, { force: true }));
+  }
+
   // Rewrites the snapshot and record the next start reads, so a restart resumes with the role of the latest run.
   const rebind = (key: string, name: string) => inTurn(lifecycle, key, async () => {
     const from = await source(name, await defaultName());
@@ -294,6 +301,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       let pending = starting.get(key);
       if (!pending) {
         await followCurrent(key);
+        await writeDefault(key);
         pending = start(key, path).finally(() => starting.delete(key));
         starting.set(key, pending);
       }
@@ -372,7 +380,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
-export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; onExit?: (key: string) => void }): HostDriver {
+export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; defaultModel?: () => Promise<string | undefined>; onExit?: (key: string) => void }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 

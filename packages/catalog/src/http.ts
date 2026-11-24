@@ -19,6 +19,10 @@ export type SessionsApiDeps = {
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
   /** The session's wait for a model slot, shown on its row while it runs; one with `error` is a run waiting to retry its endpoint, shown while stopped too. */
   waiting?(key: string): { since: number; ahead: number; provider: string; error?: string } | undefined;
+  /** A single session's read carries its own pick as `model` and the model its next run resolves to as `resolvedModel`. */
+  model?(key: string): Promise<{ model?: string; resolvedModel?: string }>;
+  /** Records the session's pick for its next run (null clears it); a string is why the model is refused. */
+  setModel?(key: string, model: string | null): Promise<string | undefined>;
   /** The server's build, as GET /version answers it, which the change stream's hello carries. */
   build?(): object;
   setTimer?: SetTimer;
@@ -28,6 +32,7 @@ export type SessionsApiDeps = {
 export { isSessionKey, SESSION_KEY };
 const ASK_ID = /^[A-Za-z0-9._:-]{1,100}$/;
 const TITLE_MAX = 120;
+const MODEL_MAX = 200;
 const { send, json } = serviceHttp({ maxBody: 64 * 1024 });
 const iso = (ms: number) => new Date(ms).toISOString();
 const WATCH = '/sessions:watch';
@@ -86,11 +91,15 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
-function patchOf(b: Record<string, unknown>): { title?: string | null; state?: 'archived' | 'stopped' } {
-  const { title, state } = b;
+/** A `provider/model` reference as the Sessions API and the settings route take it. */
+export const isModelRef = (v: unknown): v is string => typeof v === 'string' && v.length <= MODEL_MAX && /^[^/]+\/.+$/.test(v);
+
+function patchOf(b: Record<string, unknown>): { title?: string | null; state?: 'archived' | 'stopped'; model?: string | null } {
+  const { title, state, model } = b;
+  if (model !== undefined && model !== null && !isModelRef(model)) throw new Problem(400, 'model must be "provider/model" or null');
   if (title !== undefined && (typeof title !== 'string' || title.length > TITLE_MAX)) throw new Problem(400, `title must be text of at most ${TITLE_MAX} characters`);
   if (state !== undefined && state !== 'archived' && state !== 'stopped') throw new Problem(422, 'state may be written only as archived or stopped');
-  return { ...(title !== undefined && { title: (title as string).trim() || null }), ...(state !== undefined && { state }) };
+  return { ...(title !== undefined && { title: (title as string).trim() || null }), ...(state !== undefined && { state }), ...(model !== undefined && { model: model as string | null }) };
 }
 
 function resolutionOf(b: Record<string, unknown>) {
@@ -117,12 +126,25 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     if (!row) throw new Problem(404, 'no such session');
     // Checked before any write, so a refused archive leaves the title as it was.
     if (change.state === 'archived' && row.state === 'running') throw new Problem(409, 'a running session cannot be archived');
+    if (change.model !== undefined) await pick(key, change.model);
     if (change.title !== undefined) await catalog.rename(key, change.title);
     if (change.state === 'archived') await catalog.archive(key);
     if (change.state === 'stopped') await catalog.unarchive(key);
     console.log(`session ${key} changed by ${by.kind === 'person' ? by.id : 'the tailnet'}`);
-    return wire((await catalog.getSession(key))!);
+    return withModel(wire((await catalog.getSession(key))!));
   }
+
+  // Refused before any other field is written, so a bad model leaves the title and state as they were.
+  async function pick(key: string, model: string | null) {
+    if (!deps.setModel) throw new Problem(400, 'this server does not take a session model');
+    const why = await deps.setModel(key, model);
+    if (why) throw new Problem(400, why);
+  }
+
+  const withModel = async <T extends { key: string }>(w: T) => {
+    const { model, resolvedModel } = (await deps.model?.(w.key)) ?? {};
+    return { ...w, ...(model && { model }), ...(resolvedModel && { resolvedModel }) };
+  };
 
   async function deleteSession(key: string, caller: Caller) {
     writer(caller);
@@ -152,7 +174,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     mayRead(caller, key);
     const row = await catalog.getSession(key);
     if (!row) throw new Problem(404, 'no such session');
-    return wire(row);
+    return withModel(wire(row));
   }
 
   async function sub(req: IncomingMessage, url: URL, key: string, rest: string[], caller: Caller): Promise<unknown> {

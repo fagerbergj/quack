@@ -9,7 +9,7 @@ import { parseHostConfig } from './host-config.ts';
 import { reapOrphans } from './orphans.ts';
 import { processDriver, sessionHost, type HostDriver } from './process-driver.ts';
 
-type Options = { dataDir: string; agentsDir?: string; rubricFor?: RubricFor; runtime: string; sessionPort: number; broker: CredentialBroker; proxiedServices?: readonly ProxiedService[]; onExit?: (key: string) => void };
+type Options = { dataDir: string; agentsDir?: string; rubricFor?: RubricFor; defaultModel?: () => Promise<string | undefined>; runtime: string; sessionPort: number; broker: CredentialBroker; proxiedServices?: readonly ProxiedService[]; onExit?: (key: string) => void };
 type Seams = { api?: DockerCall; interfaces?: ReturnType<typeof networkInterfaces> };
 export type SessionDriver = { driver: HostDriver; /** Peers the public listener drops. */ refuse?: (address: string | undefined) => boolean; /** The one address the session listener binds. */ listenAddress: string; /** Settles once no previous distributor's session can still be running. */ ready: Promise<void> };
 
@@ -19,7 +19,7 @@ const LOOPBACK = '127.0.0.1';
 export async function sessionDriver(env: NodeJS.ProcessEnv, o: Options, seams: Seams = {}): Promise<SessionDriver> {
   const config = parseHostConfig(env);
   const { sessionPort, broker } = o;
-  const base = { dataDir: o.dataDir, agentsDir: o.agentsDir, rubricFor: o.rubricFor, onExit: o.onExit };
+  const base = { dataDir: o.dataDir, agentsDir: o.agentsDir, rubricFor: o.rubricFor, defaultModel: o.defaultModel, onExit: o.onExit };
   if (config.driver === 'process') {
     // shortcut: process sessions share this host, its secrets and its loopback, so one can still dial the public port as the tailnet; the docker driver fences it off.
     // Processes a previous run left are stopped before anything starts or the backfill opens a log they own.
