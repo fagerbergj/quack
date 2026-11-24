@@ -6,7 +6,7 @@ import { after, test } from 'node:test';
 import { contentText, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { LiveDoc } from '@earendil-works/pi-durable';
-import { openSession } from '@quack/session';
+import { agentSpec, openSession, parseDefinition, parseDeployment } from '@quack/session';
 import { FakeClock } from '../../capacity/test/fake-clock.ts';
 import { subagentExtension } from '../src/index.ts';
 
@@ -15,7 +15,7 @@ after(() => rm(dir, { recursive: true, force: true }));
 const HOUR = 3_600_000;
 
 // The parent hands each task to a child; a child whose task is in `down` gets that error, as from an endpoint refusing it.
-function endpoint() {
+function endpoint(provider?: string) {
   const down = new Map<string, string>();
   const tries = new Map<string, number>();
   let hold: Promise<void> | undefined;
@@ -29,7 +29,7 @@ function endpoint() {
     await hold;
     return fauxAssistantMessage(`done ${text}`);
   };
-  const faux = fauxProvider({ models: [{ id: 'm' }] });
+  const faux = fauxProvider({ ...(provider && { provider }), models: [{ id: 'm' }] });
   faux.setResponses(Array.from({ length: 400 }, () => step as never));
   const models = createModels();
   models.setProvider(faux.provider);
@@ -155,5 +155,23 @@ test('a stop while a child is parked aborts the child: it tries the model no mor
   const tries = e.tries.get('a');
   await clock.advance(HOUR);
   assert.equal(e.tries.get('a'), tries);
+  await session.close();
+});
+
+test('a session whose pick is on another provider than its agent\'s shows a parked child waiting on the picked provider', async () => {
+  const clock = new FakeClock();
+  const e = endpoint('picked');
+  const agentSide = fauxProvider({ provider: 'agent-side', models: [{ id: 'm' }] });
+  e.models.setProvider(agentSide.provider);
+  const deployment = parseDeployment({ providers: { 'agent-side': { baseUrl: 'http://a/v1', models: { m: { contextWindow: 4096 } } }, picked: { baseUrl: 'http://p/v1', models: { m: { contextWindow: 4096 } } } } });
+  const spec = await agentSpec(parseDefinition({ name: 'x', version: 1, model: 'agent-side/m', extensions: {} }, deployment, {}, undefined, { session: 'picked/m' }), {});
+  e.down.set('a', 'Connection error.');
+  const { session, said, waiting } = await open({ ...e, model: spec.model }, clock);
+  await session.submit('parent a', 'r1');
+  assert.ok(await until(clock, async () => (e.tries.get('a') ?? 0) >= 3));
+  assert.deepEqual([(await waiting())?.provider, (await waiting())?.error], ['picked', 'Connection error.']);
+  assert.equal(agentSide.state.callCount, 0, 'the agent\'s own provider is never called');
+  e.down.delete('a');
+  assert.ok(await until(clock, () => said('done a')));
   await session.close();
 });
