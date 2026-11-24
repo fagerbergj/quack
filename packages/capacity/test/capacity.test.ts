@@ -7,8 +7,7 @@ import { afterEach, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, onRunEnded, primeSessionEndpoint, runEnded, whileWaiting, type ModelWait } from '@quack/sdk';
 import { agentSpec, openSession, startLifecycleSender } from '@quack/session';
-import { realClock } from '../src/gate.ts';
-import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
+import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, HOLD_MS, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
 import { FakeClock } from './fake-clock.ts';
 
 const TTL = 30_000;
@@ -17,11 +16,12 @@ const MINUTE = 60_000;
 const clock = new FakeClock();
 let table: LeaseLedger;
 const open: LeaseLedger[] = [];
-const fresh = (limit = 6) => (table = new LeaseLedger({ dbPath: ':memory:', capacity: { swap: limit }, ttlMs: TTL, now: clock.now }), open.push(table), table);
+const fresh = (limit = 6) => (table = new LeaseLedger({ dbPath: ':memory:', capacity: { swap: limit }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer }), open.push(table), table);
 afterEach(() => (clock.reset(), open.splice(0).forEach((t) => t.close())));
 
+// In process, as the service answers: a first acquire at once, the next held until the place changes.
 const direct = (t: LeaseLedger): LeaseClient => ({
-  acquire: async (e, h) => t.acquire(e, h),
+  acquire: async (e, h, o) => (o?.ahead === undefined ? t.acquire(e, h) : t.wait(e, h, o.ahead, o.signal)),
   // A queued row is a lost lease to the gate, as the HTTP client reads the service's 409.
   heartbeat: async (e, h) => { const l = t.heartbeat(e, h); return l?.state === 'granted' ? l : undefined; },
   release: async (e, h) => void t.release(e, h),
@@ -66,6 +66,94 @@ test('waiters are served first in, first out', async () => {
   await a.release();
   await clock.advance(1000);
   assert.deepEqual([sb.granted, sc.granted], [true, false]);
+});
+
+// Counts each acquire the gate sends, held or not.
+function counted(t: LeaseLedger) {
+  const base = direct(t);
+  const sent: Array<number | undefined> = [];
+  return { sent, client: { ...base, acquire: (e, h, o) => (sent.push(o?.ahead), base.acquire(e, h, o)) } as LeaseClient };
+}
+
+test('a release grants the held waiter with no time passing, and in queue order', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  const [a, b, c] = ['a', 'b', 'c'].map((h) => begin(gate(h)));
+  await clock.settle();
+  const t0 = clock.now();
+  table.release('swap', 'o');
+  await clock.settle();
+  assert.deepEqual([a.granted, b.granted, c.granted, clock.now()], [true, false, false, t0]);
+  assert.deepEqual([notes.b, notes.c], [{ since: t0, ahead: 0, provider: 'swap' }, { since: t0, ahead: 1, provider: 'swap' }], 'the moved-up places reach the wait signal');
+  table.release('swap', 'a');
+  await clock.settle();
+  assert.deepEqual([b.granted, c.granted], [true, false]);
+});
+
+test('a held acquire comes back after the hold time unchanged, and the gate asks again, holding its place', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  const { sent, client } = counted(table);
+  const w = begin(gate('w', client));
+  await clock.settle();
+  assert.deepEqual(sent, [undefined, 0], 'one answer at once, then one held');
+  await clock.advance(HOLD_MS - 1);
+  assert.deepEqual(sent, [undefined, 0]);
+  await clock.advance(1);
+  assert.deepEqual([sent, w.granted, table.endpoints()[0].waiting], [[undefined, 0, 0], false, ['w']]);
+  table.release('swap', 'o');
+  await clock.settle();
+  assert.equal(w.granted, true);
+});
+
+test('an expired holder grants the held waiter at its expiry, with no request to notice it', async () => {
+  fresh(1);
+  table.acquire('swap', 'crashed');
+  const w = begin(gate('w'));
+  await clock.advance(TTL - 1);
+  assert.equal(w.granted, false);
+  await clock.advance(1);
+  assert.equal(w.granted, true);
+});
+
+test('a waiter whose client went away is dropped and skipped: the place goes to the one behind it', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  table.acquire('swap', 'gone');
+  const gone = new AbortController();
+  const held = table.wait('swap', 'gone', 0, gone.signal);
+  const next = gate('next');
+  const n = begin(next);
+  await clock.settle();
+  gone.abort(new Error('hung up'));
+  await assert.rejects(held, /hung up/);
+  await clock.settle();
+  assert.deepEqual(table.endpoints()[0].waiting, ['next']);
+  assert.deepEqual(notes.next, { since: clock.now(), ahead: 0, provider: 'swap' });
+  table.release('swap', 'o');
+  await clock.settle();
+  assert.deepEqual([n.granted, heldBy()], [true, ['next']]);
+});
+
+test('the service holds a PUT with ahead until the place changes, and a client that hangs up loses its place', async () => {
+  const { fetch, call, stop } = served({ swap: 1 });
+  await call('PUT', '/endpoints/swap/leases/a');
+  assert.equal((await call('PUT', '/endpoints/swap/leases/b?ahead=1')).json.ahead, 0, 'a stale place answers at once');
+  const answered: Array<{ state: string }> = [];
+  void fetch('http://capacity/endpoints/swap/leases/b?ahead=0', { method: 'PUT' }).then(async (r) => answered.push(await r.json()));
+  const hangUp = new AbortController();
+  void fetch('http://capacity/endpoints/swap/leases/c?ahead=1', { method: 'PUT', signal: hangUp.signal }).catch(() => {});
+  await call('PUT', '/endpoints/swap/leases/d');
+  await clock.settle();
+  assert.equal(answered.length, 0, 'held');
+  hangUp.abort();
+  await clock.settle();
+  assert.deepEqual((await call('GET', '/endpoints/swap')).json.waiting, ['b', 'd'], 'c is gone, not waiting for a grant');
+  await call('DELETE', '/endpoints/swap/leases/a');
+  await clock.settle();
+  assert.deepEqual(answered.map((l) => l.state), ['granted']);
+  assert.equal((await call('PUT', '/endpoints/swap/leases/b?ahead=x')).status, 400);
+  stop();
 });
 
 test('a run keeps its lease through a long tool phase while another session waits', async () => {
@@ -595,7 +683,7 @@ test('a shared call riding a free held lease reports no wait; one waiting its tu
 });
 
 test('with several calls queued on different providers, the report is the oldest wait whole: its since, ahead and provider', async () => {
-  table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 1, y: 1 }, ttlMs: TTL, now: clock.now });
+  table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 1, y: 1 }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer });
   open.push(table);
   await gate('hx').begin('x');
   await gate('hy').begin('y');
@@ -619,7 +707,7 @@ test('with several calls queued on different providers, the report is the oldest
 });
 
 test('calls finishing out of order free their own lease, not the newest one', async () => {
-  table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 2, y: 1 }, ttlMs: TTL, now: clock.now });
+  table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 2, y: 1 }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer });
   open.push(table);
   const g = gate('s');
   const x1 = await g.begin('x');
@@ -683,7 +771,7 @@ async function gatedSession(steps: FauxResponseStep[], limit = 1, hear = true) {
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  table = new LeaseLedger({ dbPath: ':memory:', capacity: { [m.provider]: limit }, ttlMs: TTL, now: clock.now });
+  table = new LeaseLedger({ dbPath: ':memory:', capacity: { [m.provider]: limit }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer });
   open.push(table);
   const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: capacitySessionExtensions({}, gate('s')) }, retry: { enabled: false } });
@@ -751,7 +839,7 @@ test('a call aborted before afterResponse ends with its invocation, so the next 
 
 // The app as the /apps gateway hands it requests, relative to its mount; no socket.
 function served(capacity: Record<string, number>, now: () => number = clock.now) {
-  const app = createCapacityService({ dbPath: ':memory:', capacity, leaseTtlMs: TTL, now });
+  const app = createCapacityService({ dbPath: ':memory:', capacity, leaseTtlMs: TTL, now, setTimer: clock.setTimer });
   const fetch = inProcessFetch((req, res) => app.handle(req, res));
   const call = async (method: string, path: string) => {
     const r = await fetch(`http://capacity${path}`, { method });
@@ -854,10 +942,6 @@ test('an agent that selects no capacity entry is gated when the session has a di
   assert.deepEqual(await names(undefined), []);
 });
 
-test('the real clock\'s sleep rejects at once on an already-aborted signal', async () => {
-  await assert.rejects(realClock.sleep(60_000, AbortSignal.abort(new Error('aborted'))), /aborted/);
-});
-
 test('capacity comes from the providers that name it', () => {
   assert.deepEqual(capacityLimits({ providers: { local: { capacity: 6 }, clef: {} } }), { local: 6 });
 });
@@ -865,7 +949,7 @@ test('capacity comes from the providers that name it', () => {
 test('the wait history keeps the newest 100 grants per endpoint, so it does not grow with every grant', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
   const dbPath = join(dir, 'capacity.db');
-  const ledger = new LeaseLedger({ dbPath, capacity: { swap: 1, other: 1 }, ttlMs: TTL, now: clock.now });
+  const ledger = new LeaseLedger({ dbPath, capacity: { swap: 1, other: 1 }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer });
   try {
     for (let i = 0; i < 250; i++) {
       for (const endpoint of ['swap', 'other']) {
