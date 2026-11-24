@@ -5,7 +5,10 @@ import { App } from './App.tsx';
 import { parseArtifactRoute } from './ArtifactPage.tsx';
 import { artifactHref } from './extension.ts';
 import { CHAT_DEFAULT, CHAT_MIN, clampChat, PANE_MIN, useSplit } from './Split.tsx';
-import { ask, assistant, byVersion, entry, failedRun, FakeEventSource, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
+import { ask, assistant, byVersion, entry, failedRun, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, streamsOf, stubViewport, useHarness, usage, view } from './test-harness.ts';
+
+const PULLS = 'apps/github/events';
+const WATCH = './sessions:watch';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -59,7 +62,7 @@ test('the list asks for last-activity order and shows rows as the server ordered
   expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain(listed('sessions').slice('GET /'.length));
 });
 
-test('a refresh moves a session that worked to the top of its section', async () => {
+test('a change on the stream moves a session that worked to the top of its section; nothing is polled', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const a = sess('gh:a', { title: 'Alpha', lastActivity: '2026-11-01T02:00:00.000Z' }), b = sess('gh:b', { title: 'Beta', lastActivity: '2026-11-01T01:00:00.000Z' });
@@ -68,11 +71,38 @@ test('a refresh moves a session that worked to the top of its section', async ()
     location.hash = '#/sessions';
     render(<App />);
     const hrefs = () => within(screen.getByRole('region', { name: 'Recent' })).getAllByRole('link').map((l) => l.getAttribute('href'));
+    const lists = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith('sessions?')).length;
     await screen.findByRole('region', { name: 'Recent' });
     expect(hrefs()).toEqual(['#/s/gh%3Aa', '#/s/gh%3Ab']);
     routes['GET /sessions'] = { sessions: [{ ...b, lastActivity: '2026-11-01T03:00:00.000Z' }, a] };
-    await act(() => vi.advanceTimersByTimeAsync(15_000));
-    expect(hrefs()).toEqual(['#/s/gh%3Ab', '#/s/gh%3Aa']);
+    const read = lists();
+    await act(() => vi.advanceTimersByTimeAsync(10 * 60_000));
+    expect(lists(), 'no read without a change').toBe(read);
+    streamsOf(WATCH)[0]!.emit('changed', { keys: ['gh:b'] });
+    await waitFor(() => expect(hrefs()).toEqual(['#/s/gh%3Ab', '#/s/gh%3Aa']));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('the list is read again on every (re)open of the change stream, and a stream the server refused reopens after 30 s', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    routes['GET /sessions'] = { sessions: [sess('gh:a', { title: 'Alpha' })] };
+    stubViewport(false);
+    location.hash = '#/sessions';
+    render(<App />);
+    await screen.findByRole('link', { name: /Alpha/ });
+    routes['GET /sessions'] = { sessions: [sess('gh:a', { title: 'Alpha' }), sess('gh:b', { title: 'Beta' })] };
+    streamsOf(WATCH)[0]!.open();
+    expect(await screen.findByRole('link', { name: /Beta/ })).toBeInTheDocument();
+    routes['GET /sessions'] = { sessions: [sess('gh:c', { title: 'Gamma' })] };
+    streamsOf(WATCH)[0]!.fail();
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(streamsOf(WATCH)).toHaveLength(2);
+    expect(screen.queryByRole('link', { name: /Gamma/ }), 'read once the new stream opens, not before').toBeNull();
+    streamsOf(WATCH)[1]!.open();
+    expect(await screen.findByRole('link', { name: /Gamma/ })).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
@@ -118,8 +148,8 @@ test('review rows carry one PR badge each from the mirror, neutral when the serv
   const view = render(<App />);
   // Before the read answers, a badge is neutral and links by the session key.
   expect(await screen.findByRole('link', { name: 'Pull request #1 on GitHub' })).toHaveAttribute('href', 'https://github.com/a/one/pull/1');
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
-  FakeEventSource.all[0].open();
+  await waitFor(() => expect(streamsOf(PULLS)).toHaveLength(1));
+  streamsOf(PULLS)[0].open();
   expect(await screen.findByRole('link', { name: 'Pull request #2, merged, on GitHub' })).toHaveTextContent(/^#2$/);
   // Once the mirror answers, the badge links to GitHub's html_url.
   expect(screen.getByRole('link', { name: 'Pull request #1, open, on GitHub' })).toHaveAttribute('href', 'https://github.com/A/One/pull/1');
@@ -128,11 +158,11 @@ test('review rows carry one PR badge each from the mirror, neutral when the serv
   // The badge shows the number, so the title keeps it for screen readers only.
   expect(within(screen.getByRole('link', { name: /#1 First/ })).getByText('#1')).toHaveClass('sr-only');
   view.unmount();
-  expect(FakeEventSource.all[0].readyState, 'the stream closes with the last badge').toBe(2);
+  expect(streamsOf(PULLS)[0].readyState, 'the stream closes with the last badge').toBe(2);
   routes['GET /sessions'] = { sessions: [sess('github:a/one#4', { title: 'fix: fourth' })] };
   render(<App />);
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(2));
-  FakeEventSource.all[1].open();
+  await waitFor(() => expect(streamsOf(PULLS)).toHaveLength(2));
+  streamsOf(PULLS)[1].open();
   expect(await screen.findByRole('link', { name: 'Pull request #4, closed, on GitHub' })).toBeInTheDocument();
 });
 
@@ -2049,7 +2079,7 @@ describe('the session page as a ledger', () => {
     await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
     const latest = ledgerOf(log)[1]!;
     expect(within(latest).getByText(/Double-check failed/).closest('details')).toHaveAttribute('open');
-    expect(within(latest).getByText('Fail')).toBeInTheDocument();
+    expect(within(latest).getByRole('img', { name: 'Failed' })).toBeInTheDocument();
   });
 
   test('while the judge runs, only running checks are listed and each one folds into Done as it finishes', async () => {
@@ -2066,7 +2096,7 @@ describe('the session page as a ledger', () => {
     expect(within(screen.getByRole('list', { name: 'Checks running' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Stays in scopeChecking']);
     const done = screen.getByText('Done · 1 problem · 1 nothing found');
     expect(done.closest('details')).not.toHaveAttribute('open');
-    expect(within(screen.getByRole('list', { name: 'Checks done' })).getByText('Fail')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Checks done' })).getByRole('img', { name: 'Failed' })).toBeInTheDocument();
     expect(screen.queryByText('Waiting for the double-check')).toBeNull();
   });
 });

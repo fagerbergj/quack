@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
-import { agentModel, decide, modelResolver, observeGeneration, inputTooLarge, parseDecision, retryModelCall, type RetrySeams } from '@quack/sdk';
+import { agentModel, decide, modelResolver, observeGeneration, parseDecision, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
 import { PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
@@ -88,7 +88,7 @@ function massOf(ask: Ask, a: { type: string; probability?: number; probabilities
   return undefined;
 }
 
-// null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
+// null is a deterministic miss (over the cap, no such model, a refusal) and is memoized; undefined is an outage, retried on a rerun.
 async function classify(api: ToolExecutionApi, ref: DecisionModelRef, items: Item[], s: Settings, ctx: Context): Promise<Record<string, number> | null | undefined> {
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
   if (tokensOf(items) > ref.maxInputTokens) return null;
@@ -100,11 +100,16 @@ async function classify(api: ToolExecutionApi, ref: DecisionModelRef, items: Ite
   const ask = (fetch: typeof globalThis.fetch) => api.models.classify(model, request(items), { signal: ctx.abortSignal, fetch, maxRetries: 0 });
   const result = await s.clef(() => retryModelCall(`${ref.provider}/${ref.modelId}`, ask, ctx.abortSignal, s.retry).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
-  // The estimate can undercount a request the model then refuses as too large: that is over the cap, not an outage.
-  if (result && inputTooLarge(result)) return null;
-  if (result?.stopReason !== 'stop') return undefined;
+  if (result?.stopReason === 'stop') return probabilitiesFrom(items, result.answers);
+  // Only a transient failure that outlasted the retries is an outage; a refusal (a 4xx, an input too large) or a non-stop answer comes back the same next round.
+  if (!result || transientModelError(result)) return undefined;
+  (s.retry?.log ?? console.error)(`judge: decision model ${ref.provider}/${ref.modelId} refused (${result.stopReason}: ${(result.errorMessage ?? '').slice(0, 120)}); its questions escalate`);
+  return null;
+}
+
+function probabilitiesFrom(items: Item[], answers: Record<string, unknown>): Record<string, number> {
   const asks = new Map(questionsOf(items).map((q, n): [string, (typeof q)] => [`q${n}`, q]));
-  return Object.fromEntries(Object.entries(result.answers).flatMap(([key, a]) => {
+  return Object.fromEntries(Object.entries(answers).flatMap(([key, a]) => {
     const q = asks.get(key);
     const p = q && massOf(q.c, a as never);
     return q && p !== undefined ? [[q.id, p]] : [];
@@ -196,8 +201,18 @@ async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask
 
 /** Told when a request's decision-model answers are in, after its confident ones are counted; `ready` is what an unsure item waits on before it may escalate, or undefined when it need not wait. */
 export type Hold = { heard: (asked: Pending[]) => void; ready: (unit: Unit, check: Ask) => Promise<void> | undefined };
-/** `retry` is the model calls' retry test seam. */
-export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams; hold?: Hold };
+/** `retry` is the model calls' retry test seam; `busy` is told as items go to the judge model (+1) and come back (-1). */
+export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams; hold?: Hold; busy?: (asked: Pending[], n: 1 | -1) => void };
+
+// Marks items as with the judge model for as long as `ask` runs.
+async function asking<T>(s: Settings, asked: Pending[], ask: () => Promise<T>): Promise<T> {
+  s.busy?.(asked, 1);
+  try {
+    return await ask();
+  } finally {
+    s.busy?.(asked, -1);
+  }
+}
 /** `answer` is absent when the item was not escalated because its check had already decided. */
 export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
@@ -222,7 +237,8 @@ async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending
     const held = batch.map((p) => s.hold?.ready(p.unit, p.check)).filter((w) => w !== undefined);
     if (held.length) await Promise.all(held);
     const missed = await s.escalations(async () => {
-      const replies = await askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx);
+      const needed = batch.filter((p) => need(p.unit, p.check));
+      const replies = await asking(s, needed, () => askBatch(api, s, model, needed, ctx));
       for (const p of batch) {
         const r = replies.get(p);
         if (r) await done(p, { met: passing(p.check).includes(r.choice), resolver, note: r.reason });
@@ -257,10 +273,13 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   // A PASS_ONLY check's confident failing answer is not taken: the judge model decides it and gives the writer a reason.
   const sure = (p: number | undefined, check: Ask) => p !== undefined && (p >= act || (1 - p >= act && check.decisionModel !== PASS_ONLY));
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
+  // An unreachable decision model leaves its items undecided for the round to ask again, instead of loading the judge model.
+  const stalled = probabilities === undefined ? asked.filter((x) => x.check.decisionModel !== false) : [];
+  for (const a of stalled) await done(a, { met: null, resolver: 'none' });
   s.hold?.heard(asked);
-  const unsure = asked.filter((x) => !sure(x.p, x.check));
+  const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check));
   // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
-  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await escalate(api, s, a.unit, a.check, ctx) : undefined)) : done(a, undefined));
+  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await asking(s, [a], () => escalate(api, s, a.unit, a.check, ctx)) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.
   const alone = (a: Pending) => s.hold?.ready(a.unit, a.check)?.then(() => go(a)) ?? go(a);
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);

@@ -68,10 +68,16 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
   // Memoized once it succeeds, retried while the database is down, so the distributor can start before it.
   const ensure = () => (ready ??= store.migrate().catch((err) => { ready = undefined; throw err; }));
 
-  // Writes for one session run one at a time, so a journaled watermark is the one its write applied at.
+  // In-process: the distributor is the catalog's one writer. Several writers on one Postgres would need LISTEN/NOTIFY.
+  const listeners = new Set<(key: string) => void>();
+  function changed(key: string) {
+    for (const fn of listeners) try { fn(key); } catch (err) { log(`catalog: a change listener failed: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+
+  // Writes for one session run one at a time, so a journaled watermark is the one its write applied at; each that commits is announced.
   const chains = new Map<string, Promise<unknown>>();
   function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const next = (chains.get(key) ?? Promise.resolve()).then(fn, fn);
+    const next = (chains.get(key) ?? Promise.resolve()).then(fn, fn).then((out) => (changed(key), out));
     const tail = next.then(() => {}, () => {});
     chains.set(key, tail);
     void tail.then(() => chains.get(key) === tail && chains.delete(key));
@@ -188,6 +194,10 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
     listArtifacts: (req: ListRequest & { session?: string }) => read(() => store.listArtifacts({
       where: scoped(req.session === undefined ? 'artifacts' : 'sessionArtifacts', req.q, req.session), orderBy: orderOf({ sealedAt: 'newest' } as const, req.orderBy), ...pageOf(req),
     })),
+    /** Hears the key of each session a committed write changed; clients re-read the rows. Returns the unsubscribe. */
+    subscribe: (fn: (key: string) => void) => (listeners.add(fn), () => void listeners.delete(fn)),
+    /** Announces a change to what a session's row shows from outside the store, such as the distributor's wait overlay. */
+    changed,
     close: () => store.close(),
   };
 }

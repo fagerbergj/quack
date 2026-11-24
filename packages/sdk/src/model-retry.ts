@@ -31,6 +31,9 @@ type Reply = { stopReason: string; errorMessage?: string };
 // An input over the model's context fails the same way every time, whatever status the host gives it (llama.cpp: 500).
 export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
 
+/** A failure retrying can clear (429, 5xx, connection, timeout, an engine restart); a 4xx refusal, an input over the context or a model answer cannot. */
+export const transientModelError = (reply: Reply) => !inputTooLarge(reply) && isRetryableAssistantError(reply as unknown as AssistantMessage);
+
 // Strata refuses these while its pool is full or its engine restarts (about 2 min); both clear on their own, unlike a prompt over the pool.
 // Both halves are the engine's words: the pool refusal is its log line for a full lane (#2487), the other what server.py returns to a request waiting through a restart.
 const ENGINE_BUSY = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)|the engine stopped while this request waited; it was not sent/;
@@ -70,7 +73,7 @@ export async function retryModelCall<T extends Reply>(model: string, call: (send
   for (let attempt = 1; ; attempt++) {
     retryAfter = null;
     const reply = await call(watched);
-    if (attempt > MODEL_RETRY.maxRetries || inputTooLarge(reply) || !isRetryableAssistantError(reply as unknown as AssistantMessage)) return reply;
+    if (attempt > MODEL_RETRY.maxRetries || !transientModelError(reply)) return reply;
     const ms = delayMs(attempt, retryAfter, random);
     log(`model retry: session=${process.env.QUACK_SESSION_KEY ?? '-'} model=${model} status=${statusOf(reply.errorMessage)} attempt=${attempt}/${MODEL_RETRY.maxRetries} in ${ms}ms`);
     await sleep(ms, signal);

@@ -82,6 +82,8 @@ export type Extension = {
   link?: (key: string) => { url: string; label: string } | undefined;
   /** Judge unit ids that stand for the whole artifact; a note prefixed with one needs no chip (verdicts sealed before `scope` was recorded). */
   wholeUnits?: string[];
+  /** A judge note drawn against the version it judged (a report's claim and source); undefined for another kind or a note it cannot read. */
+  note?: (kind: string, content: string, note: string) => ReactNode | undefined;
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
   scope?: (key: string) => string | undefined;
   /** A nav entry under Apps and the page it opens. */

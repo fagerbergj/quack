@@ -12,6 +12,7 @@ import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
+import { claimOf } from '@quack/sdk/report';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession, replayJudge } from '@quack/eval';
 import { buildEvidence, decisionModelTokens, manifest as judgeManifest, rejudge, type Inputs, type JudgeConfig, type Question, type Verdict } from '@quack/judge';
@@ -481,6 +482,20 @@ test('reasoning that follows from the finding\'s sourced facts passes; an unsour
   assert.match(reasoning, /number, date, name or quote/, 'a figure the finding does not already give is never reasoning, however it is worded');
   const asked = clef.requests.find((r) => Object.values(r.questions).some((q) => q.includes('finding-1.3 ~')))!;
   assert.match(JSON.stringify(asked.state), /rated at 190 km per charge.*rated at 140 km/, 'the inference is asked beside the facts it draws on');
+});
+
+test('the web reads every judged item\'s claim back from the report by its name, a cited paragraph above a list included', () => {
+  const above = '## Findings\nLater paragraph [s21].\n- Covered by the paragraph above.\n\nA-MAC scores: [s16]\n- Utility: rated.\n- **Lead:**\n  - Nested one [s3]. Two.\n';
+  const reports = [above, ...readdirSync(new URL('./fixtures/reports/', import.meta.url)).map((n) => readFileSync(new URL(`./fixtures/reports/${n}`, import.meta.url), 'utf8'))];
+  for (const md of reports) {
+    const units = buildEvidence(reportDeclaration, inputsOf(md, new Map(citedIds(md).map((id) => [id, 'page'])))).evidence.source;
+    for (const u of units) {
+      const [, n, k] = /^source finding-(\d+)\.(\d+) ~ s\d+$/.exec(u.id)!;
+      assert.equal(claimOf(md, Number(n), Number(k)), u.state.claim, u.id);
+    }
+  }
+  assert.equal(claimOf(above, 1, 1), 'Later paragraph.');
+  assert.equal(claimOf(above, 1, 2), 'Covered by the paragraph above.');
 });
 
 test('every item of the fixture reports fits Clef\'s window with its finding shared, even when each cited page is long and on topic', () => {

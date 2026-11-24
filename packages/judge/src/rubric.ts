@@ -14,6 +14,9 @@ export type Unit = {
 /** Evidence units by scope name; the judge builds them from the declaration for the rubric's code checks. */
 export type Evidence = Record<string, Unit[]>;
 
+/** The facts the declaration's first `facts` unit carries, typed by the rubric that declared them; the cast is the rubric's claim. */
+export const factsOf = <T>(ev: Evidence): T => ev.facts[0].state.facts as unknown as T;
+
 /** `marks` names what in the artifact the result concerns (e.g. citation ids), so a renderer can flag it from the verdict alone. */
 export type CodeResult = { met: number; detail?: string; marks?: string[] };
 

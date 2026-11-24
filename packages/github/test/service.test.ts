@@ -325,6 +325,75 @@ test('a /fix refused for any reason other than a running session is answered, no
   }
 });
 
+// A run-end the way the distributor delivers it, and the wait for the retry it starts (it is not awaitable).
+type RunEnd = (session: string, event: { type: string }) => void;
+const runEnds = () => {
+  const heard: RunEnd[] = [];
+  const subscribe = ((on: RunEnd) => (heard.push(on), () => void heard.splice(heard.indexOf(on), 1))) as never;
+  return { subscribe, end: (session = 'github:acme/widgets#7') => heard.forEach((on) => on(session, { type: 'run.ended' })) };
+};
+const until = async (done: () => boolean) => { for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setImmediate(r)); };
+
+test('queued work starts when the session run ends, with no timer and no sweep', async () => {
+  invocations.length = 0;
+  const { subscribe, end } = runEnds();
+  const { svc, url } = await queuedService({ subscribe });
+  try {
+    busy = true;
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-ev1', to: url }), 202);
+    busy = false;
+    end('github:other/repo#1');
+    await until(() => invocations.length > 0);
+    assert.equal(invocations.length, 0, 'another session ending retries nothing of this one');
+    end();
+    await until(() => invocations.length > 0);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-ev1']);
+  } finally {
+    busy = false;
+    svc.stop();
+  }
+});
+
+test('review pushes while the reviewer runs are one steer on the newest head when the run ends', async () => {
+  invocations.length = 0;
+  const { subscribe, end } = runEnds();
+  const { svc, url } = await queuedService({ subscribe });
+  try {
+    runningAgent = 'reviewer';
+    assert.equal(await deliver('pull_request', pushed('abc123'), { id: 'd-ev2', to: url }), 202);
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-ev3', to: url }), 202);
+    end();
+    await until(() => invocations.length > 0);
+    await until(() => false);
+    assert.equal(invocations.length, 1, 'one steer, not one per push');
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-ev3/steer/reviewer', 'steer']]);
+    assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
+  } finally {
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+test('with no run-end event the slow sweep still retries queued work', async () => {
+  invocations.length = 0;
+  let sweep = () => {};
+  let every = 0;
+  const queueTimers = { setInterval: (fn: () => void, ms: number) => (sweep = fn, every = ms, {}), clearInterval: () => {} };
+  const { svc, url } = await queuedService({ queueTimers, queuePollMs: undefined });
+  try {
+    busy = true;
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-ev4', to: url }), 202);
+    busy = false;
+    assert.ok(every >= 60_000, 'a slow sweep');
+    sweep();
+    await until(() => invocations.length > 0);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-ev4']);
+  } finally {
+    busy = false;
+    svc.stop();
+  }
+});
+
 const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository };
 const pushed = (sha: string) => ({ action: 'synchronize', pull_request: { ...pr, head: { sha, ref: 'fix' }, labels: [{ name: 'quack:review' }] }, repository });
 

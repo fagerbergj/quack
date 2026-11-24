@@ -22,7 +22,8 @@
     "packages/eval": {
       "entry": [
         "src/main.ts",
-        "src/replay-judge.ts"
+        "src/replay-judge.ts",
+        "src/escalation-report.ts"
       ]
     },
     "packages/runtime": {

@@ -1,8 +1,6 @@
-import { useEffect } from 'react';
-import { getVersion, servedVersion } from './api.ts';
+import { useEffect, useRef } from 'react';
+import { getVersion, type Version } from './api.ts';
 
-// An installed app stays open for hours, so it asks the server for its build instead of waiting for a fresh load.
-const EVERY = 5 * 60_000;
 const TEXT = new Set(['text', 'search', 'url', 'email', 'number', 'textarea']);
 
 /** True when a reload would lose something: a typed field, an open dialog, or anything marked data-unsaved (pending attachments). */
@@ -14,19 +12,22 @@ export function unsaved(doc: Document = document) {
 /** Whether the server now runs a different build than this page loaded with; an unknown build on either side is no change. */
 export const outdated = (running: string | null | undefined, served: string | null | undefined) => Boolean(running && served && running !== served);
 
-/** Reloads into a new deploy: at once when nothing is unsaved, else at the next moment the page is hidden and clean. */
-export function useUpdates(reload: () => void = () => location.reload()) {
+/** Reloads into `served`, the build the server's change stream names, when it differs from this page's: at once when nothing is unsaved,
+ * else at the next moment the page is hidden and clean. */
+export function useUpdates(served: Version | undefined, reload: () => void = () => location.reload()) {
+  const stale = useRef(false);
+  const settle = useRef(() => { if (stale.current && !unsaved()) reload(); });
   useEffect(() => {
-    const running = getVersion();
-    let stale = false;
-    const settle = () => { if (stale && !unsaved()) reload(); };
-    const check = async () => {
-      stale ||= outdated((await running)?.commit, (await servedVersion())?.commit);
-      if (document.visibilityState === 'visible') settle();
-    };
-    const seen = () => void (document.visibilityState === 'visible' ? check() : settle());
-    const timer = setInterval(() => document.visibilityState === 'visible' && void check(), EVERY);
+    let live = true;
+    void getVersion().then((running) => {
+      stale.current ||= outdated(running?.commit, served?.commit);
+      if (live && document.visibilityState === 'visible') settle.current();
+    });
+    return () => void (live = false);
+  }, [served]);
+  useEffect(() => {
+    const seen = () => settle.current();
     document.addEventListener('visibilitychange', seen);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', seen); };
+    return () => document.removeEventListener('visibilitychange', seen);
   }, []);
 }

@@ -129,10 +129,10 @@ test('the call past the fixed limit is refused and the others still answer', asy
 
 test('parallel children each take a lease on the model endpoint, so a session never holds more than the provider gives', async () => {
   const clock = new FakeClock();
-  const table = new LeaseLedger({ dbPath: ':memory:', capacity: { faux: 2 }, ttlMs: 30_000, now: clock.now });
+  const table = new LeaseLedger({ dbPath: ':memory:', capacity: { faux: 2 }, ttlMs: 30_000, now: clock.now, setTimer: clock.setTimer });
   let peakHeld = 0;
   const client: LeaseClient = {
-    acquire: async (e, h) => { const r = table.acquire(e, h); peakHeld = Math.max(peakHeld, table.endpoints()[0]!.held.length); return r; },
+    acquire: async (e, h, o) => { const r = o?.ahead === undefined ? table.acquire(e, h) : await table.wait(e, h, o.ahead, o.signal); peakHeld = Math.max(peakHeld, table.endpoints()[0]!.held.length); return r; },
     heartbeat: async (e, h) => table.heartbeat(e, h),
     release: async (e, h) => void table.release(e, h),
   };
@@ -141,7 +141,7 @@ test('parallel children each take a lease on the model endpoint, so a session ne
   const session = await openSession({ dir: join(root, `s${n++}`), models: s.models, agent: { model: s.model, extensions: [...capacitySessionExtensions({}, gate), subagentExtension()] } });
   let result: Awaited<ReturnType<typeof session.submit>> | undefined;
   const running = session.submit('parent', 'r1', true).then((r) => (result = r));
-  // The third child polls for a lease on the fake clock, so time moves only here; the bound turns a wedge into a failure.
+  // The third child waits for a lease on the fake clock, so time moves only here; the bound turns a wedge into a failure.
   for (let polls = 0; !result && polls < 2_000; polls++) await clock.advance(1_000);
   assert.ok(result, 'the run settled');
   await running;

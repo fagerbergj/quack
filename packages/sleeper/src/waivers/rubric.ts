@@ -1,14 +1,13 @@
-import type { CodeResult, Declaration, Evidence, Inputs, Rubric } from '@quack/judge';
+import { factsOf, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric } from '@quack/judge';
 import { defect, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { Candidate, WaiversCard } from './card.ts';
 import { worth, type WaiverFacts } from './facts.ts';
 
 const parse = (artifact: string) => parseCard<WaiversCard>(artifact);
-const factsOf = (ev: Evidence) => ev.facts[0].state.facts as unknown as WaiverFacts;
 
 // A dearer drop than the add is fine when no bench player is cheaper (an empty slot scores zero); a player with no figure is not compared.
 function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
+  const f = factsOf<WaiverFacts>(ev);
   const rows = parse(artifact).candidates;
   const bench = Object.values(f.roster).filter((p) => p.role === 'bench').flatMap((p) => { const w = worth(p); return w === null ? [] : [{ p, w }]; });
   const flaws = rows.flatMap((r) => {
@@ -22,7 +21,7 @@ function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
 }
 
 function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
+  const f = factsOf<WaiverFacts>(ev);
   const c = parse(artifact);
   const seen = new Set([...c.candidates.map((r) => r.player.id), ...c.also_checked.map((r) => r.player.id)]);
   const missing = f.widely.filter((id) => !seen.has(id));
@@ -31,7 +30,7 @@ function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
 
 // A pitfall over the bye holes: a hole needs as many claims at its position, on another bye, as it is short. Each add's own bye is on the card.
 function byeCoverage(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
+  const f = factsOf<WaiverFacts>(ev);
   const rows = parse(artifact).candidates;
   const holes = f.table.find((t) => t.mine)?.byes ?? [];
   const open = holes.flatMap((h) => {

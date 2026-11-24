@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { App } from '../App.tsx';
-import { Fail, FakeEventSource, FakeIntersectionObserver, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
+import { Fail, FakeIntersectionObserver, streamsOf, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
 
 useHarness(() => ({ 'GET /agents': { agents: [] } }));
 
@@ -13,7 +13,8 @@ const reads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u
 const badge = (n: number, state?: string) => screen.getByRole('link', { name: state ? `Pull request #${n}, ${state}, on GitHub` : `Pull request #${n} on GitHub` });
 const findBadge = (n: number, state: string) => screen.findByRole('link', { name: `Pull request #${n}, ${state}, on GitHub` });
 
-const stream = () => vi.waitFor(() => FakeEventSource.all[0] ?? Promise.reject(new Error('no stream yet')));
+const pulls = () => streamsOf('apps/github/events');
+const stream = () => vi.waitFor(() => pulls()[0] ?? Promise.reject(new Error('no stream yet')));
 
 function list(keys: string[]) {
   routes['GET /sessions'] = { sessions: keys.map((k) => sess(k, { title: `fix: pr ${k.split('#')[1]}` })) };
@@ -27,10 +28,10 @@ test('the PRs the list shows are read from the mirror once the stream opens, eac
   routes[mirror(2)] = pull(2, merged);
   list(['github:A/One#1', 'github:a/one#2']);
   await screen.findByRole('link', { name: /#2 Pr 2/ });
-  expect(FakeEventSource.all.map((s) => s.url)).toEqual(['apps/github/events']);
+  expect(pulls()).toHaveLength(1);
   expect(reads(), 'nothing is read before the stream is subscribed').toEqual([]);
   expect(badge(2)).toHaveAttribute('href', 'https://github.com/a/one/pull/2');
-  FakeEventSource.all[0].open();
+  pulls()[0].open();
   const chip = await findBadge(2, 'merged');
   expect(chip).toHaveAttribute('href', 'https://github.com/A/One/pull/2');
   expect(chip).toHaveAttribute('target', '_blank');
@@ -48,7 +49,7 @@ test('only badges on screen are read; the stream updates the rest, and a badge s
   (await stream()).open();
   await findBadge(2, 'open');
   expect(reads().sort(), 'rows below the fold are not read').toEqual(['apps/github/repos/a/one/pulls/1', 'apps/github/repos/a/one/pulls/2']);
-  FakeEventSource.all[0].emit('pull_request', { action: 'closed', repository: { full_name: 'a/one' }, pull_request: pull(3, merged) });
+  pulls()[0].emit('pull_request', { action: 'closed', repository: { full_name: 'a/one' }, pull_request: pull(3, merged) });
   expect(badge(3, 'merged'), 'an event needs no read').toBeInTheDocument();
   FakeIntersectionObserver.offScreen = (el) => !below(el);
   FakeIntersectionObserver.scroll();
@@ -114,9 +115,9 @@ test('a stream the app refuses (a 503 past its cap) is reopened after 30 s; the 
   try {
     es.fail();
     vi.advanceTimersByTime(29_999);
-    expect(FakeEventSource.all).toHaveLength(1);
+    expect(pulls()).toHaveLength(1);
     vi.advanceTimersByTime(1);
-    expect(FakeEventSource.all).toHaveLength(2);
+    expect(pulls()).toHaveLength(2);
   } finally {
     vi.useRealTimers();
   }

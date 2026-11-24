@@ -15,6 +15,10 @@ afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c();
 const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
 let base = '';
 let catalog: ReturnType<typeof createCatalog>;
+let route: ReturnType<typeof sessionsApi>;
+// A fake clock for the change stream: a timer runs only when a test fires it.
+const timers = new Set<{ fn: () => void; ms: number }>();
+const fire = (ms: number) => [...timers].filter((t) => t.ms === ms).forEach((t) => (timers.delete(t), t.fn()));
 
 const ev = (seq: number, type: string, data: unknown, id = `${type}:${seq}`) => ({ seq, id, at: T0 + seq * 1000, type, data }) as CatalogEvent;
 
@@ -29,8 +33,11 @@ beforeEach(async () => {
     deleteSession: async () => (deps.refuse ? { refused: deps.refuse } : 'deleted'),
     waiting: (key) => deps.waits[key],
     answer: async (_key, _ask, r) => { deps.answered.push(r); return deps.sessionSays; },
+    build: () => ({ commit: 'abc123', builtAt: '2026-11-24T00:00:00Z' }),
+    setTimer: (fn, ms) => { const t = { fn, ms }; timers.add(t); return () => void timers.delete(t); },
   };
-  const route = sessionsApi(catalog, api);
+  timers.clear();
+  route = sessionsApi(catalog, api);
   // The listener in front names the caller; tests pass it in a header.
   const server = createServer(async (req, res) => {
     const caller = JSON.parse(String(req.headers['x-caller'] ?? '{"kind":"person","id":"jason"}')) as Caller;
@@ -38,7 +45,7 @@ beforeEach(async () => {
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  cleanups.push(async () => { await new Promise((r) => server.close(r)); await store.close(); await rm(dir, { recursive: true, force: true }); });
+  cleanups.push(async () => { route.stop(); await new Promise((r) => server.close(r)); await store.close(); await rm(dir, { recursive: true, force: true }); });
   for (const [i, key] of ['sleeper:platinum:1', 'sleeper:platinum:2', 'review:monorepo'].entries()) {
     await catalog.publish(key, [
       ev(1, 'session.created', { agent: 'quack', createdAt: T0 + i }), ev(2, 'title.set', { title: `Title ${i}` }),
@@ -178,4 +185,36 @@ test('DELETE removes the session once its directory is gone, and is refused whil
   assert.deepEqual(await call('DELETE', path).then((r) => [r.status, r.body]), [200, { key: 'sleeper:platinum:2' }]);
   assert.equal((await call('GET', path)).status, 404);
   assert.equal((await call('DELETE', path)).status, 404);
+});
+
+async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, want: RegExp) {
+  let text = '';
+  while (!want.test(text)) text += new TextDecoder().decode((await reader.read()).value);
+  return text;
+}
+
+test('the change stream says hello with the build, then sends a burst of writes as one event of their keys', async () => {
+  const res = await fetch(`${base}/sessions:watch`);
+  assert.deepEqual([res.status, res.headers.get('content-type'), res.headers.get('cache-control')], [200, 'text/event-stream', 'no-cache, no-transform']);
+  const reader = res.body!.getReader();
+  assert.equal(await readUntil(reader, /\n\n$/), `event: hello\ndata: ${JSON.stringify({ commit: 'abc123', builtAt: '2026-11-24T00:00:00Z' })}\n\n`);
+  await call('PATCH', `/sessions/${k('sleeper:platinum:1')}`, { body: { title: 'One' } });
+  await call('PATCH', `/sessions/${k('sleeper:platinum:1')}`, { body: { state: 'archived' } });
+  await call('PATCH', `/sessions/${k('review:monorepo')}/asks/a-1`, { body: { resolution: { choice: 'approve' } } });
+  assert.equal([...timers].filter((t) => t.ms === 250).length, 1, 'one flush for the burst');
+  fire(250);
+  assert.equal(await readUntil(reader, /\n\n$/), `event: changed\ndata: ${JSON.stringify({ keys: ['sleeper:platinum:1', 'review:monorepo'] })}\n\n`);
+  fire(15_000);
+  assert.equal(await readUntil(reader, /\n\n$/), ': keepalive\n\n', 'nothing more was sent for the burst');
+  route.stop();
+  assert.equal((await reader.read()).done, true);
+  assert.equal(timers.size, 0, 'a stopped stream leaves no timer');
+});
+
+test('the change stream reads as the session list: a session credential needs the cross-session grant', async () => {
+  const own: Caller = { kind: 'session', key: 'review:monorepo', crossSession: false };
+  assert.equal((await call('GET', '/sessions:watch', { caller: own })).status, 404);
+  const res = await fetch(`${base}/sessions:watch`, { headers: { 'x-caller': JSON.stringify({ ...own, crossSession: true }) } });
+  assert.equal(res.status, 200);
+  await res.body!.cancel();
 });

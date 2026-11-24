@@ -13,7 +13,7 @@ import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Artifacts, artifactsExtension, gateGenerations, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { check, feedback, progressOf, report, score, settled, type CheckResult, type Declaration, type Inputs, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
+import { check, feedback, progressOf, report, score, settled, undecidedMessage, type CheckResult, type Declaration, type Inputs, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -280,4 +280,8 @@ test('a second workflow run without LiveDoc.run gets a fresh revision budget via
 
   const secondRun = await check(apiFor(20) as never, opts, v2 as never, 'submit', BACKGROUND_CONTEXT);
   assert.ok('verdict' in secondRun && secondRun.verdict.passed === true, 'a new workflow run gets a fresh revision budget');
+});
+
+test('the undecided message keeps the phrase the judge-health audit matches', () => {
+  assert.match(undecidedMessage(['c.says_why'], 'submit_review'), /gave no usable answer for c\.says_why/);
 });
