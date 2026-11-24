@@ -26,8 +26,8 @@ export function Note({ text, scope, about }: { text: string; scope?: string; abo
 
 /** A check's result as one mark: passed, failed, or didn't apply. */
 export function Mark({ check }: { check: Check }) {
-  const [glyph, tone, word] = check.met === null ? ['–', 'font-normal text-muted', "Didn't apply"] : checkFailed(check) ? ['✗', 'text-danger', 'Failed'] : ['✓', 'text-success', 'Passed'];
-  return <span role="img" aria-label={word} title={word} className={`w-4 flex-none text-center font-bold ${tone}`}>{glyph}</span>;
+  const [glyph, tone, word] = check.met === null ? ['–', 'font-normal text-muted', "Didn't apply"] : checkFailed(check) ? ['✗', 'font-bold text-danger', 'Failed'] : ['✓', 'font-bold text-success', 'Passed'];
+  return <span role="img" aria-label={word} title={word} className={`w-4 flex-none text-center ${tone}`}>{glyph}</span>;
 }
 
 // How many items fell short on screen ("3 of 60"); the words go to assistive tech and the tooltip.

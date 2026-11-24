@@ -46,6 +46,7 @@ const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-tra
 const retry = (draft: number | undefined, round: number) => (draft ? `save ${draft}` : round > 0 ? `after ${round} failed ${round === 1 ? 'try' : 'tries'}` : '');
 
 // One version in the transcript: its line, its number and mark (standing, save and retries in the tooltip) and, when it failed, its check result.
+// The socket carries only a kind's newest content, so an older version's notes show without their claims here; its pane reads them.
 export function LedgerItem({ a, round, draft, running, onOpen, markOf = byVerdict }: { a: SealedArtifact; round: number; draft?: number; running: boolean; onOpen: (a: SealedArtifact) => void; markOf?: MarkOf }) {
   const named = namedBy(a, running);
   const hasCard = Boolean(artifactCard(a));

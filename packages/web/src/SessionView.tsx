@@ -330,7 +330,7 @@ function Running({ view, waiting, active, queued }: { view: View; waiting: boole
   const checks = liveChecks(view.tool?.details);
   // Queued for a model slot nothing generates, so the line is still: no paddling duck. The checks keep their rows.
   const head = queued
-    ? <p aria-label={`Waiting for ${queued.provider} capacity · ${queued.ahead} ahead`} className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>
+    ? <p className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>
     : <Working label={checks ? progressLabel(checks) : stepLabel(view)} />;
   return (
     <>

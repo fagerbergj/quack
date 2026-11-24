@@ -1,3 +1,4 @@
+import { claimOf } from '@quack/sdk/report';
 import { BLUE, cut, plain, type Extension } from '../extension.ts';
 import { Blurb } from '../Markdown.tsx';
 
@@ -5,42 +6,6 @@ import { Blurb } from '../Markdown.tsx';
 function question(s: string): string {
   const i = s.slice(0, 40).search(/[?,.]/);
   return i < 0 ? cut(s) : s.slice(0, i + (s[i] === '?' ? 1 : 0)).trim();
-}
-
-const BULLET = /^(\s*)([-*]|\d+\.)\s/;
-const MARK = /\s*\[s\d+\]/g;
-type Bullet = { indent: number; lines: string[]; context: string[]; kids: number };
-type Read = { all: Bullet[]; open: Bullet[]; on: boolean; fence: boolean; gap: boolean };
-
-function readLine(r: Read, line: string) {
-  const m = BULLET.exec(line);
-  if (/^\s*(`{3,}|~{3,})/.test(line)) [r.fence, r.open] = [!r.fence, []];
-  else if (r.fence) return;
-  else if (line.startsWith('## ')) [r.on, r.open] = [line.slice(3).trim().toLowerCase() === 'findings', []];
-  else if (r.on && m) {
-    r.open = r.open.filter((o) => o.indent < m[1]!.length);
-    const parent = r.open.at(-1);
-    if (parent) parent.kids++;
-    const item = { indent: m[1]!.length, lines: [line], context: parent ? [...parent.context, ...(/\[s\d+\]/.test(parent.lines.join(' ')) ? parent.lines : [])] : [], kids: 0 };
-    r.all.push(item);
-    r.open.push(item);
-  } else if (line.trim() && r.open.length && (!r.gap || /^\s{2}/.test(line))) r.open.at(-1)!.lines.push(line);
-  else if (line.trim()) r.open = [];
-  r.gap = !line.trim();
-}
-
-const SENTENCE = /(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u;
-const leadIn = (t: string) => /:[\s*_]*(\[s\d+\]\s*)*$/.test(t);
-
-/** The Nth finding's Kth sentence, numbered as the research judge names its items ("finding-3.2"), marks stripped.
- *  shortcut: reads bullet lists only, without the cited paragraph above a list that the judge also counts; upgrade if verdicts carry the claim. */
-export function claimOf(report: string, n: number, k: number): string | undefined {
-  const r: Read = { all: [], open: [], on: false, fence: false, gap: false };
-  for (const line of report.split('\n')) readLine(r, line);
-  const f = r.all.filter((b) => !(b.kids > 0 && leadIn(b.lines.join(' ').replace(/[\s*_`]+$/, ''))))[n - 1];
-  const sentences = f && [...f.context, ...f.lines].map((l) => l.replace(BULLET, '').trim()).flatMap((l) => l.split(SENTENCE))
-    .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(MARK, '')) && !leadIn(t));
-  return sentences?.[k - 1]?.replace(MARK, '').trim();
 }
 
 // A grouped note names its claim, then the item by scope: "finding-3.2: source finding-3.2 ~ s4: why".
