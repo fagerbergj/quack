@@ -175,6 +175,8 @@ function throttle(send: () => Promise<void>, now: () => number, setTimer: SetTim
       if (now() - last >= ms) return fire();
       armed = true;
       cancel = setTimer(fire, last + ms - now(), { background: true });
+      // A host may decline a background timer; the next poke tries again rather than freezing the counts.
+      if (!cancel) armed = false;
     },
     /** Nothing is sent once this resolves: the tool call's details close with the round. */
     async stop() {
@@ -258,11 +260,11 @@ function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => vo
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans = planChecks(opts.rubric, opts.declaration, built);
   const byKey = new Map(plans.map((p) => [p.key, p]));
-  const now = new Map<string, number>();
-  const counts = () => new Map(plans.map((p) => [p.key, countsOf(p, now.get(p.key) ?? 0)]));
+  const inFlight = new Map<string, number>();
+  const counts = () => new Map(plans.map((p) => [p.key, countsOf(p, inFlight.get(p.key) ?? 0)]));
   const live = report && throttle(() => report.send(progressOf(opts.rubric, [...code, ...settled(plans)], counts())), () => api.now(), report.setTimer);
   const busy = (asked: Pending[], n: 1 | -1) => {
-    for (const a of asked) now.set(a.check.id, (now.get(a.check.id) ?? 0) + n);
+    for (const a of asked) inFlight.set(a.check.id, (inFlight.get(a.check.id) ?? 0) + n);
     live?.poke();
   };
   const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(1), hold: holds(byKey), busy };
@@ -305,7 +307,8 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
 }
 
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
-  await report?.send(progressOf(opts.rubric, []));
+  // Progress is only shown, so a failed write leaves the row at "Checking" rather than failing the submit.
+  await report?.send(progressOf(opts.rubric, [])).catch(() => undefined);
   const built = await evidenceFor(api, opts, sealed, ctx);
   const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
   const code = codeResults(opts.rubric, sealed.content, built.evidence);

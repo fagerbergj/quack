@@ -82,21 +82,28 @@ function useStill(running: LiveCheck[]): (c: LiveCheck) => boolean {
 
 const pct = (k: number, n: number) => `${(100 * k) / Math.max(n, 1)}%`;
 
+// The breakdown sums to the items done: answers no model could give, and items their check no longer needed, close the gap.
+function tipOf(c: LiveCheck, w: ReturnType<typeof byWhom>, done: number, inFlight: number) {
+  const rest = done - w.clef - w.judge - w.code - w.reused;
+  const parts = [w.clef && `${w.clef} by Clef`, w.judge && `${w.judge} by the judge model`, w.code && `${w.code} by code`, w.reused && `${w.reused} from earlier versions`, rest && `${rest} undecided or not needed`];
+  return [`${done} of ${c.units} done`, ...parts, inFlight && `${inFlight} with the judge model now`, c.waiting && `${c.waiting} waiting`].filter(Boolean).join(', ');
+}
+
 /** One running check: "42/60" over a bar of items settled without the judge model, settled by it, with it now, and waiting. */
 function RunningRow({ c, still }: { c: LiveCheck; still: boolean }) {
   if (c.waiting === undefined || c.units === undefined) return <li className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className="flex-none text-[11px] text-muted">Checking</span></li>;
-  const [n, now, done, w] = [c.units, c.escalating ?? 0, doneOf(c), byWhom(c.settled)];
-  const parts = [`${done} of ${n} done`, w.clef && `${w.clef} by Clef`, w.judge && `${w.judge} by the judge model`, w.code && `${w.code} by code`, now && `${now} with the judge model now`, c.waiting && `${c.waiting} waiting`];
-  const tip = `${still ? 'No new answer for 2 min. ' : ''}${parts.filter(Boolean).join(', ')}`;
+  const [n, inFlight, done, w] = [c.units, c.escalating ?? 0, doneOf(c), byWhom(c.settled)];
+  const tip = `${still ? `No new answer for ${STILL_MS / 60_000} min. ` : ''}${tipOf(c, w, done, inFlight)}`;
   return (
-    <li title={tip} aria-label={`${c.label}. ${tip}`} className="grid grid-cols-[1fr_auto] items-baseline gap-x-2.5 gap-y-1 py-1.5">
-      <span aria-hidden="true" className="min-w-0 break-words">{c.label}</span>
+    <li title={tip} className="grid grid-cols-[1fr_auto] items-baseline gap-x-2.5 gap-y-1 py-1.5">
+      <span className="min-w-0 break-words">{c.label}</span>
       <span aria-hidden="true" className={`text-[12px] tabular-nums ${still ? 'text-warning' : 'text-muted'}`}>{still ? 'Waiting…' : `${done}/${n}`}</span>
       <span aria-hidden="true" data-bar className="col-span-2 flex h-1 overflow-hidden rounded-full bg-line">
         <span className="bg-accent-ink" style={{ width: pct(done - w.judge, n) }} />
         <span className="bg-info" style={{ width: pct(w.judge, n) }} />
-        <span className="bg-info/40" style={{ width: pct(now, n) }} />
+        <span className="bg-info/40" style={{ width: pct(inFlight, n) }} />
       </span>
+      <span className="sr-only">{tip}</span>
     </li>
   );
 }

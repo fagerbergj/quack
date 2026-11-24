@@ -92,13 +92,17 @@ const scenario: Scenario = {
     await eachView(ctx, "a running double-check counts its items done, over a bar of who settled them", async (page, label) => {
       const key = `qa-judge-live-${label}`;
       const run = runFlow(ctx.url, key, 'qa-judge-0', 'live');
-      // The judge starts once the report is sealed; on a phone the chat holds the running checks.
-      while (!((await (await fetch(`${ctx.url}/sessions/${key}/artifacts`)).json().catch(() => ({}))) as { artifacts?: unknown[] }).artifacts?.length) await new Promise((r) => setTimeout(r, 200));
-      await page.goto(`${ctx.url}/#/s/${key}`);
-      if (label.startsWith('400')) await page.getByRole('tab', { name: /^Chat/ }).click();
-      await visible(page.getByRole('list', { name: 'Checks running' }).getByText('2/6'));
-      await ctx.shot(page, `judge-loop-live-${label}`);
-      await run;
+      try {
+        // The judge starts once the report is sealed, within 10 s; on a phone the chat holds the running checks.
+        const sealed = async () => ((await (await fetch(`${ctx.url}/sessions/${key}/artifacts`)).json().catch(() => ({}))) as { artifacts?: unknown[] }).artifacts?.length;
+        for (let i = 0; i < 50 && !(await sealed()); i++) await new Promise((r) => setTimeout(r, 200));
+        await page.goto(`${ctx.url}/#/s/${key}`);
+        if (label.startsWith('400')) await page.getByRole('tab', { name: /^Chat/ }).click();
+        await visible(page.getByRole('list', { name: 'Checks running' }).getByText('2/6'));
+        await ctx.shot(page, `judge-loop-live-${label}`);
+      } finally {
+        await run;
+      }
     });
     await ctx.step('the passed report shows its verdict beside the chat once expanded', async () => {
       const page = await ctx.browser.newPage({ viewport: { width: 1280, height: 900 } });

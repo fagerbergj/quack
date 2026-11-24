@@ -39,11 +39,11 @@ function Short({ check }: { check: Check }) {
   return <span title={how} className="flex-none text-[12px] text-danger tabular-nums"><span aria-hidden="true">{`${s.n} of ${s.of}`}</span><span className="sr-only">{how}</span></span>;
 }
 
-/** Settled items by who answered them: `code` is the judge's own, and any model but the decision model is the judge model an item escalated to. */
+/** Settled items by who answered them: `code` is the judge's own, `reused` came from an earlier round, and any other model but the decision model is the judge model. */
 export function byWhom(resolvers: Record<string, number> = {}) {
-  const out = { clef: 0, judge: 0, code: 0 };
+  const out = { clef: 0, judge: 0, code: 0, reused: 0 };
   // shortcut: the decision model is told apart by "clef" in its id, as every deployment names it; upgrade if a verdict names its decision model.
-  for (const [k, n] of Object.entries(resolvers)) out[k === 'code' ? 'code' : /clef/i.test(k) ? 'clef' : 'judge'] += n;
+  for (const [k, n] of Object.entries(resolvers)) out[k === 'code' || k === 'reused' ? k : /clef/i.test(k) ? 'clef' : 'judge'] += n;
   return out;
 }
 
@@ -51,7 +51,7 @@ export function byWhom(resolvers: Record<string, number> = {}) {
 export function resolverLine(c: Pick<Check, 'units' | 'resolvers' | 'reused'>): { text: string; tip: string } | undefined {
   if (!c.units || c.units < 2 || !c.resolvers) return undefined;
   const w = byWhom(c.resolvers);
-  const reused = Object.keys(c.reused ?? {}).length;
+  const reused = w.reused + Object.keys(c.reused ?? {}).length;
   const parts = [w.clef && `${w.clef} by Clef`, w.judge && `${w.judge} by the judge model`, w.code && `${w.code} by code`, reused && `${reused} from earlier versions`].filter(Boolean);
   const tip = Object.entries(c.resolvers).map(([k, n]) => `${n} by ${k}`).join(', ');
   return { text: [`${c.units} items`, parts.join(', ')].filter(Boolean).join(' · '), tip: tip || 'No item was asked' };

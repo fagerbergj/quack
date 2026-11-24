@@ -41,7 +41,8 @@ export function fakeModel(reply: string | FakeScript): Promise<{ server: Server;
     req.on('end', () => {
       const request = parse(body);
       const picked = script(request);
-      setTimeout(() => answer(res, request.stream === true, picked), picked.delayMs ?? 0);
+      // A held reply can outlive its requester; writing to the abandoned socket would throw in the rig.
+      setTimeout(() => !res.destroyed && answer(res, request.stream === true, picked), picked.delayMs ?? 0);
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1` })));
