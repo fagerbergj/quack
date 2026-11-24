@@ -2049,7 +2049,7 @@ describe('the session page as a ledger', () => {
     await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
     const latest = ledgerOf(log)[1]!;
     expect(within(latest).getByText(/Double-check failed/).closest('details')).toHaveAttribute('open');
-    expect(within(latest).getByText('Fail')).toBeInTheDocument();
+    expect(within(latest).getByRole('img', { name: 'Failed' })).toBeInTheDocument();
   });
 
   test('while the judge runs, only running checks are listed and each one folds into Done as it finishes', async () => {

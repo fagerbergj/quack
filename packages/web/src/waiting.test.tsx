@@ -37,3 +37,16 @@ test('the session view says "Waiting…" instead of what it is generating, and d
   ws.frame({ type: 'waiting', waiting: null });
   expect(screen.queryByText('Waiting…')).not.toBeInTheDocument();
 });
+
+test('a double-check queued for a model slot keeps its check rows under "Waiting…", the provider and how many are ahead in its tooltip and label', async () => {
+  location.hash = '#/s/ui%3Au1';
+  render(<App />);
+  const ws = FakeSocket.all[0]!;
+  ws.open();
+  const checks = [{ criterion: 'c', id: 'sup', label: 'A claim is not stated', weight: 1 }, { criterion: 'c', id: 'cites', label: 'Cites no source', weight: 'gate', met: 1 }];
+  ws.frame(snapshot({ run: true, tools: [{ callId: 'b', name: 'submit_report', status: 'running', details: { rubric: 'r', checks } }] }));
+  ws.frame({ type: 'waiting', waiting: { since: 60_000, ahead: 3, provider: 'local' } });
+  expect(screen.getByLabelText('Waiting for local capacity · 3 ahead')).toHaveTextContent('Waiting…');
+  expect(within(screen.getByRole('list', { name: 'Checks running' })).getByText('A claim is not stated')).toBeInTheDocument();
+  expect(screen.getByText(/^Done ·/)).toBeInTheDocument();
+});

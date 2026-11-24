@@ -67,7 +67,7 @@ export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, onClos
         )}
       </div>
       <SessionKeyContext value={sessionKey}><Loaded sessionKey={sessionKey} a={a} what={`version ${versionOf(a)}`}>{(full) => <Body a={full} now={a === versions[0] ? now : undefined} />}</Loaded></SessionKeyContext>
-      {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}
+      {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} about={{ kind: a.kind, content }} />}
     </div>
   );
 }

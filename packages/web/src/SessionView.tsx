@@ -327,14 +327,15 @@ function useSeed(sessionKey: string, state: SocketState, send: Send) {
 function Running({ view, waiting, active, queued }: { view: View; waiting: boolean; active: boolean; queued?: ModelWait }) {
   if (waiting) return <Working label="Waiting for you" />;
   if (!active) return null;
-  // Queued for a model slot nothing generates, so the line is still: no paddling duck.
-  if (queued) return <p className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>;
   const checks = liveChecks(view.tool?.details);
-  if (!checks) return <Working label={stepLabel(view)} />;
+  // Queued for a model slot nothing generates, so the line is still: no paddling duck. The checks keep their rows.
+  const head = queued
+    ? <p aria-label={`Waiting for ${queued.provider} capacity · ${queued.ahead} ahead`} className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>
+    : <Working label={checks ? progressLabel(checks) : stepLabel(view)} />;
   return (
     <>
-      <Working label={progressLabel(checks)} />
-      <CheckProgress checks={checks} />
+      {head}
+      {checks && <CheckProgress checks={checks} />}
     </>
   );
 }
