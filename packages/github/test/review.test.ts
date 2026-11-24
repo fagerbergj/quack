@@ -215,7 +215,10 @@ test("promises_handled shows the review's text on a sentence's names, so a promi
 
 test('promises_handled holds a sentence that describes the bug or the state before the change, not what the change does', () => {
   // Replay false fails at 2aee2c08: 2494 v1/v2 "`waitingOnHuman` broke mid-word", 2474 v1's issue "This blocks the `artifact-panes` scenario".
-  assert.match(reviewDeclaration.checks.promises_handled.question.instructions, /A sentence that describes the problem or the state before this change, rather than what the change does, holds/);
+  const q = reviewDeclaration.checks.promises_handled.question.instructions;
+  assert.match(q, /A sentence that describes the problem or the state before this change, rather than what the change does, holds\.$/);
+  // At 579ca9eb a "code it only mentions" excuse let the #2422 v1 catch pass in 1 of 3 repeats.
+  assert.doesNotMatch(q, /states no behaviour|only mentions/);
 });
 
 test('a case without the diff, findings or review input gives promise items instead of throwing', () => {
