@@ -1,4 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
+import { contextLines, fetchRecent } from '../context.ts';
 import { ownerTeam, POSITIONS, ptsKey, UNAVAILABLE, type LineupInput } from '../lineup/facts.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 import { byeWeeks, COVER, seasonStats, STREAMED, teamNeeds, valued, worth, type Bye, type Valued } from '../waivers/facts.ts';
@@ -29,6 +30,8 @@ export type TradeFacts = {
   mine: Side;
   /** Every other team. */
   partners: Side[];
+  /** Per player the prompt shows (your roster and partner surplus), one line of recent form, usage and who is out; a trade outlasts this week's matchup. */
+  context: Record<string, string>;
 };
 
 export type FinderInput = LineupInput;
@@ -83,7 +86,7 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
-  const [dump, proj, schedule, stats] = await Promise.all([client.players(), client.projections(league.season, input.week), client.schedule(league.season), seasonStats(client, league.season)]);
+  const [dump, proj, schedule, stats, recent] = await Promise.all([client.players(), client.projections(league.season, input.week), client.schedule(league.season), seasonStats(client, league.season), fetchRecent(client, league.season, input.week)]);
   const byes = byeWeeks(schedule);
   const key = ptsKey(league.scoring_settings?.rec);
   const slots = lineupSlots(league.roster_positions);
@@ -91,7 +94,9 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => valued(id, dump, proj, key, byes, stats) };
   const sides: Side[] = rosters.map((r: Json) => sideOf(r, ctx));
   const mine = sides.find((s) => s.rosterId === roster.roster_id)!;
-  return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners: sides.filter((s) => s !== mine) };
+  const partners = sides.filter((s) => s !== mine);
+  const context = contextLines([...Object.keys(mine.players), ...partners.flatMap((p) => p.surplus)], { dump, schedule, key, week: input.week, recent, brief: true });
+  return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners, context };
 }
 
 /** The players a finder deal can name: your active tradeable players and every partner's surplus. */

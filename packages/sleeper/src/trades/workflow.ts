@@ -7,9 +7,11 @@ import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { cardsKind } from '../lineup/card.ts';
 import { buildFinderCard, type FinderDecision } from './card.ts';
-import { buildTradeFacts, dealable, type FinderInput, type Side, type TPlayer, type TradeFacts } from './facts.ts';
+import { buildTradeFacts, dealable, type FinderInput, type Side, type TradeFacts } from './facts.ts';
 import { tradeDeclaration, tradeInputs, tradeRubric } from './rubric.ts';
 import { cardJudge } from '../job.ts';
+import { contextTail, TRADE_LEGEND } from '../context.ts';
+import { line } from '../waivers/workflow.ts';
 
 export const FINDER_WORKFLOW = 'sleeper.trade-finder';
 
@@ -22,19 +24,19 @@ const finderSchema = obj({
   summary: str({ maxLength: 300 }),
 }, { open: true });
 
-const line = (p: TPlayer) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (news: News, id: string) => (news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('');
-const roster = (s: Side, news: News) => Object.values(s.players).sort((a, b) => a.role.localeCompare(b.role) || b.proj - a.proj).map((p) => `  - ${line(p)} [${p.role}]${links(news, p.id)}`).join('\n');
+const roster = (f: TradeFacts, news: News) => Object.values(f.mine.players).sort((a, b) => a.role.localeCompare(b.role) || b.proj - a.proj).map((p) => `  - ${line(p)} [${p.role}]${links(news, p.id)}${contextTail(f.context, p.id)}`).join('\n');
 const standing = (s: Side, of: number) => `${s.team} (${s.record}, ${s.rank} of ${of}, ${s.stance}); needs ${JSON.stringify(s.needs)}; bye holes ${JSON.stringify(s.byes)}`;
 const header = (f: TradeFacts) => `Week ${f.week}, ${standing(f.mine, f.teams)}. The league has ${f.teams} teams and ${f.playoffTeams} playoff spots; public trade charts assume 12 teams.`;
 
 const NEWS_RULE = 'Linked news is dated. A newer report from a credible source beats the Sleeper designation, which lags; when they conflict, say which you followed.';
 
-function finderPrompt(f: TradeFacts, news: News): string {
-  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}${links(news, id)}`).join('\n') || '    none'}`);
+export function finderPrompt(f: TradeFacts, news: News): string {
+  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}${links(news, id)}${contextTail(f.context, id)}`).join('\n') || '    none'}`);
   return [
     header(f),
-    `Your roster; your surplus ids: ${JSON.stringify(f.mine.surplus)}:\n${roster(f.mine, news)}`,
+    ...(f.context && Object.keys(f.context).length ? [TRADE_LEGEND] : []),
+    `Your roster; your surplus ids: ${JSON.stringify(f.mine.surplus)}:\n${roster(f, news)}`,
     `Partners:\n${partners.join('\n')}`,
     ...(Object.values(news).some((n) => n.length) ? [NEWS_RULE] : []),
     'Choose at most three deals, best first. Each trades one of your players (give) for one of that team\'s surplus players (get); name the team by its bracketed roster id. In `note`, cite the linked news for both players of the deal, or say none was found. With no fit, return none and say so.',

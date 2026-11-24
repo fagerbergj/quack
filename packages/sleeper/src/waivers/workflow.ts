@@ -10,6 +10,7 @@ import { buildWaiversCard, type WaiverDecision } from './card.ts';
 import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
 import { waiversDeclaration, waiversInputs, waiversRubric } from './rubric.ts';
 import { cardSteps } from '../job.ts';
+import { CONTEXT_LEGEND, contextTail } from '../context.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
 
@@ -26,19 +27,21 @@ const decisionSchema = obj({
   summary: str({ maxLength: 400 }),
 }, { open: true });
 
-const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.ppg === undefined ? '' : `, season ${p.ppg}/g`}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
+export const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.ppg === undefined ? '' : `, season ${p.ppg}/g`}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('');
 
-function factsPrompt(f: WaiverFacts): string {
+export function factsPrompt(f: WaiverFacts): string {
   const faab = f.waiverType === 'faab';
   const mine = f.table.find((t) => t.mine)!;
   const teams = f.table.map((t) => `${t.mine ? 'YOU ' : ''}${t.team}: ${faab ? `$${t.faabLeft} left` : `priority ${t.priority}`}; needs ${JSON.stringify(t.needs)}; bye holes ${JSON.stringify(t.byes)}`);
   const wide = new Set(f.widely);
-  const free = Object.entries(f.buckets).map(([pos, ids]) => `${pos}\n${ids.map((id) => `  - ${line(f.free[id])}, owned ${f.free[id].owned ?? '?'}%, ${f.free[id].adds ?? 'no'} adds/24h${wide.has(id) ? ' [MARKED]' : ''}${links(f, id)}`).join('\n')}`);
-  const roster = Object.values(f.roster).sort((a, b) => a.role.localeCompare(b.role)).map((p) => `  - ${line(p)} [${p.role}]${links(f, p.id)}`);
+  const free = Object.entries(f.buckets).map(([pos, ids]) => `${pos}\n${ids.map((id) => `  - ${line(f.free[id])}, owned ${f.free[id].owned ?? '?'}%, ${f.free[id].adds ?? 'no'} adds/24h${wide.has(id) ? ' [MARKED]' : ''}${links(f, id)}${contextTail(f.context, id)}`).join('\n')}`);
+  const roster = Object.values(f.roster).sort((a, b) => a.role.localeCompare(b.role)).map((p) => `  - ${line(p)} [${p.role}]${links(f, p.id)}${contextTail(f.context, p.id)}`);
   return [
     `Week ${f.week}, ${f.team}. Waiver type: ${f.waiverType}${faab ? `, $${mine.faabLeft} left` : `, your priority ${f.myPriority} of ${f.teams}`}.`,
     `League competition:\n${teams.join('\n')}`,
+    ...(f.depth?.length ? [`Free agents at or above your weakest starter's worth, by position: ${f.depth.join('; ')}`] : []),
+    ...(f.context && Object.keys(f.context).length ? [CONTEXT_LEGEND] : []),
     `Free agents by position (ownership and adds are platform-wide):\n${free.join('\n')}`,
     `Your roster:\n${roster.join('\n')}`,
     ...(Object.values(f.news).some((n) => n.length) ? ['Linked news is dated. A newer report from a credible source beats the Sleeper designation, which lags; when they conflict, say which you followed.'] : []),
