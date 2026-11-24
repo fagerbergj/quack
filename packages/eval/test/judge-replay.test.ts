@@ -11,7 +11,7 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { PASS_ONLY, type CheckDecl, type Declaration, type Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { armAt, budget, countsOf, loadArm, outcomes, packagesTar, replayJudge, table, tally, type Arm, type Case, type Row } from '../src/index.ts';
+import { armAt, budget, causesOf, countsOf, loadArm, outcomes, packagesTar, replayJudge, table, tally, type Arm, type Case, type Row } from '../src/index.ts';
 
 const rubric: Rubric = {
   name: 'acme', version: 1, threshold: 0.5,
@@ -287,6 +287,12 @@ test('an export report counts each verdict check by rubric, the decision model\'
   const verdict = { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'acme@2', undecided: [], checks: [check('why', { clef: 3, 'qwen3.8-27b': 1, code: 2 }), check('how', { 'agent-model': 2 })] };
   const exports = [{ artifacts: [{ sealedAt: 5, verdict }, { sealedAt: 1, verdict }, { sealedAt: 9, verdict: null }, { sealedAt: 9, verdict: {} as never }] }];
   assert.deepEqual(countsOf(exports, 'clef', 2), [{ key: 'acme@2 c.why', clef: 3, esc: 1 }, { key: 'acme@2 c.how', clef: 0, esc: 2 }]);
+});
+
+test('causesOf counts a decision-only row\'s escalated items by cause and ignores other outcomes and rows without items', () => {
+  const row = { items: { a: 'unsure', b: 'unsure', c: 'over-window', d: 'pass', e: 'unasked' } } as unknown as Row;
+  assert.deepEqual(causesOf(row), { unsure: 2, 'over-window': 1 });
+  assert.equal(causesOf({} as Row), undefined);
 });
 
 test('an export report reads recorded causes: the rate is theirs, outages are shown but not rated, and no-clef stays for verdicts without them', () => {
