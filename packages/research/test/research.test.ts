@@ -459,7 +459,7 @@ test('a claim holds once one cited source states it; one no source states fails,
   const check = verdict!.checks.find((k) => k.id === 'supported_by_source')!;
   assert.deepEqual([check.met, check.groups, check.resolvers], [0.5, 2, { clef: 4 }], 'Clef settled all four items, so nothing escalated');
   assert.deepEqual(check.marks, ['finding-1.2']);
-  assert.match(check.notes[0], /^finding-1\.2: source finding-1\.2 ~ s1: flagged by clef \(no reason given\): "They rest on lakes\."/);
+  assert.match(check.notes[0], /^source finding-1\.2 ~ s1: flagged by clef \(no reason given\): "They rest on lakes\."/);
   assert.equal(clef.requests.length, 1, 'the finding\'s four items packed into one request');
 });
 

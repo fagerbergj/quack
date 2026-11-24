@@ -108,7 +108,7 @@ test("Clef's no fails nothing: the guarantee's pairs go to the judge model, and 
   const failed = (await judged(t, s, ['meets_intent'], pick, { choice: 'no', reason: 'Nothing here marks the schedule read-only.' })).check('meets_intent');
   const pairs = (await builtOf(s)).evidence.guarantee.filter((u) => u.id.startsWith('guarantee read-only ~ ')).length;
   assert.deepEqual([failed.met, failed.marks, failed.resolvers.j], [false, ['read-only'], pairs], 'every pair of the failing guarantee, and none of the one Clef passed');
-  assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: Nothing here marks the schedule read-only\.$/);
+  assert.match(failed.notes[0], /^guarantee read-only ~ .+: Nothing here marks the schedule read-only\.$/);
   const held = (await judged(t, s, ['meets_intent'], pick, { choice: 'yes', reason: 'GET is the only method.' })).check('meets_intent');
   assert.deepEqual([held.met, held.resolvers.j > 0], [true, true], "the judge model's yes on a pair Clef said no to holds the guarantee");
 });
@@ -128,18 +128,36 @@ test('a grandfathered string guarantee keeps its key when another is inserted, a
   assert.equal((await keys([long])).length, 3);
 });
 
+test("a split entry's later sentence keeps its subject: every pair carries the whole entry beside its sentence", async () => {
+  const s = spec();
+  const long = 'The schedule lists every job the league runs this week, soonest first, with its next run time. It is an empty list, not an error, when the week has no runs, and the week number is still given.';
+  s.intent.guarantees = [long, { id: 'read-only', text: 'Read-only' }];
+  const units = (await builtOf(s)).evidence.guarantee;
+  const second = units.filter((u) => u.id.startsWith('guarantee It is an empty list'));
+  assert.ok(second.length > 0);
+  for (const u of second) assert.deepEqual(u.shared, { guarantee: long.split('. ')[1], entry: long });
+  assert.ok(units.filter((u) => u.id.startsWith('guarantee read-only ~ ')).every((u) => !('entry' in u.shared!)), 'an unsplit entry is its own context');
+});
+
 // Approved and recorded specs of every kind; a pair over the decision model's window would escalate unasked.
 test('every pair of the fixture specs fits the decision model', async () => {
   const storePort = specFixture('store-port-v1.json');
   const wrap = (kind: ContractSpec['kind'], document: unknown): ContractSpec => ({ ...storePort, kind, document, choices: [] });
-  const specs = { lifecycle: specFixture('lifecycle-channel-v1.json'), storePort, deployment: specFixture('deployment-v17.json'), sessions: specFixture('sessions-api-v20.json'), sdk: wrap('typescript', fixture('sdk-v3b.d.ts.txt')), env: wrap('json-schema', JSON.parse(fixture('env-v4.schema.json'))) };
+  const sessions = specFixture('sessions-api-v20.json');
+  // Its grandfathered guarantees run together as one 1.8k-character entry, so each of its eight sentences carries the whole.
+  const run = sessions.intent.guarantees.filter((g) => typeof g === 'string').map((g) => g.replace(/\.?$/, '.')).join(' ');
+  const split = { ...sessions, intent: { ...sessions.intent, guarantees: [run] } };
+  const specs = { lifecycle: specFixture('lifecycle-channel-v1.json'), storePort, deployment: specFixture('deployment-v17.json'), sessions, split, sdk: wrap('typescript', fixture('sdk-v3b.d.ts.txt')), env: wrap('json-schema', JSON.parse(fixture('env-v4.schema.json'))) };
   const checks = [{ id: 'matches_intent.meets_intent', question: contractDeclaration.checks.meets_intent.question }];
+  let carried = 0;
   for (const [name, s] of Object.entries(specs)) {
     const units = (await builtOf(s)).evidence.guarantee;
     assert.ok(units.length > 0, name);
     const over = units.filter((u) => decisionModelTokens(u, checks) >= 8192).map((u) => u.id);
     assert.deepEqual(over, [], name);
+    carried += units.filter((u) => u.shared?.entry).length;
   }
+  assert.ok(carried > 0, 'a pair carrying its whole entry is measured');
 });
 
 test('meets_intent is the one scored check, asked of the decision model, and a spec passes only when every guarantee holds', () => {
@@ -147,7 +165,7 @@ test('meets_intent is the one scored check, asked of the decision model, and a s
   assert.deepEqual(checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]), [['meets_intent', 1]]);
   assert.deepEqual(Object.values(contractDeclaration.checks).map((c) => c.decisionModel), [PASS_ONLY], 'the decision model passes pairs; only the judge model fails one');
   assert.deepEqual(contractDeclaration.checks.meets_intent.aggregate, { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'none of the {n} parts checked against this guarantee defines a mechanism for it' });
-  assert.deepEqual([contractRubric.version, contractRubric.threshold], [16, 1]);
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [17, 1]);
 });
 
 test('with no guarantees, meets_intent has no items and counts toward neither side', async (t) => {

@@ -114,7 +114,9 @@ function groupedFinal(p: Plan, r: CheckResult): CheckResult {
     // A judge model's reason says what is missing; the code note stands in only where no failing item gave one.
     if (p.aggregate.none && !reasoned) return `${k}: ${p.aggregate.none.replace('{n}', String(failed.length))}`;
     const u = reasoned ?? failed[0];
-    return `${k}: ${u.id}: ${whyOf(p, u)}`;
+    // A declared unit's id is "<scope> <item>"; an item id that starts with its group key already names the group.
+    const item = u.id.slice(u.id.indexOf(' ') + 1);
+    return `${item === k || item.startsWith(`${k} `) ? '' : `${k}: `}${u.id}: ${whyOf(p, u)}`;
   });
   if (groups.size) r.groups = groups.size;
   if (failing.length) r.marks = failing;

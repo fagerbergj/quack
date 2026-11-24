@@ -60,6 +60,8 @@ test("a failing group's note names the group once, with the reason of its first 
   const opts = optsOf(declOf(grouped('any', 'all')), abc);
   assert.deepEqual((await round(api, opts, 1)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it']);
   assert.deepEqual((await round(api, opts, 2)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)']);
+  const named = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all')), [['C ~ c1f', 'C'], ['Dx ~ d1f', 'D']]));
+  assert.deepEqual(named.checks[0].notes.map((n) => n.split(': flagged')[0]), ['rows C ~ c1f', 'D: rows Dx ~ d1f'], 'an item id that starts with its group key is not prefixed with it again');
 });
 
 test("an inner any fold with `none` notes a group no item gave a reason for in code's words, counting its items", async () => {

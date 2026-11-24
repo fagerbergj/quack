@@ -43,15 +43,15 @@ const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (name: string) => new RegExp(`(?<![\\w$])${escRe(name)}(?![\\w$])`);
 const textOf = (d: Definition) => (typeof d.definition === 'string' ? d.definition : JSON.stringify(d.definition));
 
-/** `label` is a fact's id; `at` is where the entry sits, naming an item when it has no id. */
-type Entry = { label?: string; at: string; text: string };
+/** `label` is a fact's id; `at` is where the entry sits, naming an item when it has no id; `whole` is a split string entry unsplit. */
+type Entry = { label?: string; at: string; text: string; whole?: string };
 type IntentList = 'consumers' | 'guarantees' | 'nonGoals';
 // An entry is matched as one fact; a pre-v7 string entry over the fact limit holds several, so each of its sentences is matched alone.
 function entriesOf(intent: Partial<Intent>, lists: IntentList[]): Entry[] {
   return lists.flatMap((list) => (intent[list] ?? []).flatMap((f: Fact, i): Entry[] => {
     if (typeof f !== 'string') return [{ label: f.id, at: `${list}[${i}]`, text: f.text }];
     const parts = f.length <= FACT_LIMIT ? [f] : f.split(/(?<=[.;])\s+(?=[A-Z`"(])/);
-    return parts.map((text, n) => ({ at: parts.length > 1 ? `${list}[${i}].${n + 1}` : `${list}[${i}]`, text }));
+    return parts.map((text, n) => (parts.length > 1 ? { at: `${list}[${i}].${n + 1}`, text, whole: f } : { at: `${list}[${i}]`, text }));
   }));
 }
 
@@ -115,7 +115,9 @@ function guaranteePairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   const parts = partsOf(spec, inputs[kindInput] as ContractSpec['kind']);
   return entriesOf(spec.intent, ['guarantees']).flatMap((g) => {
     const key = guaranteeKey(g);
-    return partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ id: `${key} ~ ${p.id}`, text: JSON.stringify(p.evidence), meta: { key, guarantee: g.text } }));
+    // A later sentence of a split entry may take its subject from an earlier one, so the whole entry goes along as context.
+    const meta = { key, guarantee: g.text, ...(g.whole && { entry: g.whole }) };
+    return partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ id: `${key} ~ ${p.id}`, text: JSON.stringify(p.evidence), meta }));
   });
 }
 registerSplitter('contract.guaranteePairs', guaranteePairs);
@@ -153,7 +155,7 @@ export const contractDeclaration: Declaration = {
       scope: 'guarantee',
       decisionModel: PASS_ONLY,
       aggregate: { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'none of the {n} parts checked against this guarantee defines a mechanism for it' },
-      question: yesNo('Does this part of the spec define a mechanism for the guarantee: a field, type, operation, header, status code or schema rule that makes it hold, or a behaviour the part\'s own text states?'),
+      question: yesNo('Does this part of the spec define a mechanism for the guarantee: a field, type, operation, header, status code or schema rule that makes it hold, or a behaviour the part\'s own text states? Answer no when the part only mentions the subject and leaves what makes the guarantee hold undefined.'),
     },
   },
 };
@@ -213,7 +215,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 16,
+  version: 17,
   // meets_intent is the one scored check and folds to a boolean, so the score is 0 or 1: any threshold above 0 means it must hold.
   threshold: 1,
   criteria: [
