@@ -1,23 +1,48 @@
 import { factsOf, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric } from '@quack/judge';
 import { defect, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { Candidate, WaiversCard } from './card.ts';
-import { worth, type WaiverFacts } from './facts.ts';
+import { overReplacement, STREAMED, type Mine, type WaiverFacts } from './facts.ts';
 
 const parse = (artifact: string) => parseCard<WaiversCard>(artifact);
 
-// A dearer drop than the add is fine when no bench player is cheaper (an empty slot scores zero); a player with no figure is not compared.
-function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
+const above = (n: number, pos: string) => `${Math.abs(n)} ${n >= 0 ? 'above' : 'below'} the best free ${pos}`;
+// The only bench QB or TE is the one cover for a bye or injury there, so he is never the cheap drop.
+const onlyCover = (f: WaiverFacts, p: Mine) => p.role === 'bench' && (p.pos === 'QB' || p.pos === 'TE') && Object.values(f.roster).filter((q) => q.role === 'bench' && q.pos === p.pos).length === 1;
+const slotOpen = (f: WaiverFacts, pos: string) => {
+  const mine = f.table.find((t) => t.mine);
+  return (mine?.needs[pos] ?? 0) > 0 || !!mine?.byes.some((b) => b.pos === pos && b.week === f.week);
+};
+
+/** Whether `drop` is the bench or IR skill player least over his replacement, leaving out an only QB or TE cover. */
+function cheapest(f: WaiverFacts, drop: Mine): boolean {
+  const dv = overReplacement(f, drop);
+  if (drop.role === 'starter' || onlyCover(f, drop) || dv === null) return false;
+  return Object.values(f.roster).every((p) => p.role === 'starter' || STREAMED.has(p.pos) || onlyCover(f, p) || (overReplacement(f, p) ?? Infinity) >= dv);
+}
+
+/** What is wrong with one claim's drop, in position terms, or null when the ladder allows it. */
+function ladderFlaw(f: WaiverFacts, r: Candidate): string | null {
+  const drop = f.roster[r.drop.player.id];
+  const add = f.free[r.player.id];
+  const dv = overReplacement(f, drop);
+  if (STREAMED.has(drop.pos) || dv === null) return null;
+  const what = `${drop.pos} ${drop.name} (${above(dv, drop.pos)})`;
+  if (STREAMED.has(add.pos)) {
+    if (!slotOpen(f, add.pos)) return `${add.pos} ${add.name} fills no empty ${add.pos} slot this week, so it cannot cost ${what}`;
+    if (cheapest(f, drop)) return null;
+    return `${what} is ${onlyCover(f, drop) ? `the only bench ${drop.pos}` : 'not the bench or IR player least over his replacement'}, too dear for a ${add.pos}`;
+  }
+  const av = overReplacement(f, add);
+  if (av === null || dv <= av || cheapest(f, drop)) return null;
+  return `${what} is worth more over replacement than ${add.pos} ${add.name} (${above(av, add.pos)})`;
+}
+
+// A K or DEF may cost a skill player only into this week's empty slot and only the cheapest one; a skill swap compares value over replacement. No figure, no comparison.
+function dropLadder(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf<WaiverFacts>(ev);
   const rows = parse(artifact).candidates;
-  const bench = Object.values(f.roster).filter((p) => p.role === 'bench').flatMap((p) => { const w = worth(p); return w === null ? [] : [{ p, w }]; });
-  const flaws = rows.flatMap((r) => {
-    const d = worth(f.roster[r.drop.player.id]);
-    const a = worth(f.free[r.player.id]);
-    if (d === null || a === null || d <= a) return [];
-    const cheap = bench.filter((b) => b.p.id !== r.drop.player.id && b.w < d).sort((x, y) => x.w - y.w)[0];
-    return cheap ? [`${r.drop.player.name} (${d}) is worth more than ${r.player.name} (${a}); drop ${cheap.p.name} (${cheap.w}) first`] : [];
-  });
-  return share(rows.length - flaws.length, rows.length, `the drop costs more than the add: ${flaws.join('; ')}`);
+  const flaws = rows.flatMap((r) => ladderFlaw(f, r) ?? []);
+  return share(rows.length - flaws.length, rows.length, `the drop is out of order: ${flaws.join('; ')}`);
 }
 
 function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
@@ -32,7 +57,8 @@ function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
 function byeCoverage(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf<WaiverFacts>(ev);
   const rows = parse(artifact).candidates;
-  const holes = f.table.find((t) => t.mine)?.byes ?? [];
+  // Facts recorded before rubric 9 carry K and DEF holes past this week, which streaming fills in time.
+  const holes = (f.table.find((t) => t.mine)?.byes ?? []).filter((h) => h.week === f.week || !STREAMED.has(h.pos));
   const open = holes.flatMap((h) => {
     // Facts recorded before rubric 6 carry no `short`; a hole is at least one empty slot.
     const short = h.short ?? 1;
@@ -87,11 +113,11 @@ export const waiversDeclaration: Declaration = {
 // Waivers weights are unreplayed: replay them before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 8,
+  version: 9,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'drop_not_worth_more', label: "Drops a player worth more than the add", weight: 'gate', code: dropNotWorthMore },
+      { id: 'drop_ladder', label: "Drops a player the claim does not justify", weight: 'gate', code: dropLadder },
       { id: 'widely_owned_accounted', label: "Ignores that the add is widely owned", weight: 'gate', code: widelyOwnedAccounted },
     ] },
     { id: 'claims_are_reasoned', checks: [

@@ -58,6 +58,17 @@ test('the partner table holds record, standing, stance, needs and surplus from t
   assert.equal(f.partners[0].players['400'].role, 'bench');
 });
 
+test('a starter on bye is kept, not surplus, and the deal swing is by worth, not this week\'s projection', async () => {
+  // Felix Free stands in for Bucky Irving in his week-10 bye: 0 projected, 17.81 a game. Cal Carry is the real spare back.
+  const proj = fixtures['/v1/projections/nfl/regular/2026/9'];
+  const fx = { ...fixtures, '/v1/projections/nfl/regular/2026/9': { ...proj, '300': { pts_ppr: 0 } }, '/v1/stats/nfl/regular/2026': { '300': { gp: 10, pts_ppr: 178.1 }, '400': { gp: 10, pts_ppr: 61 } } };
+  const f = await buildTradeFacts({ client: clientOf(fx) }, await snapshotOf(fx)('L1'), FINDER);
+  assert.deepEqual(f.partners[0].surplus, ['400']);
+  const c = buildFinderCard(f, { suggestions: [{ partner: 2, give: '110', get: '400', partner_need: 'needs WR', note: 'x' }], summary: 'x' }, {});
+  // Bo Bench is worth his 3.1 projection, Cal Carry his 6.1 season rate over a 5.5 projection.
+  assert.deepEqual(c.suggestions[0].delta, { you: 3, partner: -3 });
+});
+
 test('the finder card carries the tools figures and the swing, with news attached by code for both players', async () => {
   const f = await factsOf();
   const news = { '110': [item], '411': [] };
@@ -150,7 +161,7 @@ test('the finder searches news once for every player a deal may name, gives it t
   assert.ok(searched.includes('Bo Bench') && searched.includes('Tom Tail'));
   assert.match(asked[0], /\[Tom Tail report\]\(https:\/\/www\.nfl\.com/, 'the decision prompt carries the news');
   assert.deepEqual([c.kind, c.suggestions.map((s) => s.get.name), c.suggestions[0].news.map((n) => n.player)], ['trade-finder', ['Tom Tail'], ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@6', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@7', [], true]);
   assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
 });
 

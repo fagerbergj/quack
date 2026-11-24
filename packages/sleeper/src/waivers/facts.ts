@@ -52,6 +52,8 @@ export const WIDE_OWNED = 40;
 export const wideOwned = (teams: number) => Math.min(95, (WIDE_OWNED * 12) / Math.max(teams, 1));
 /** Weeks ahead a bye still counts as inside the lead time to cover it. */
 export const BYE_LEAD = 2;
+/** Kickers and defenses are streamed week to week, so only this week's empty slot is a hole. */
+export const STREAMED = new Set(['K', 'DEF']);
 
 /** Each NFL team's bye: the schedule week it has no game. */
 export function byeWeeks(schedule: Json[]): Map<string, number> {
@@ -68,6 +70,28 @@ export function wplayer(id: string, dump: Json, proj: Json, key: string, byes: M
   return { id, name: [p.first_name, p.last_name].filter(Boolean).join(' ') || id, pos, team, inj: p.injury_status ?? null, proj: round2(proj[id]?.[key] ?? 0), bye: (team && byes.get(team)) || null };
 }
 
+/** `wplayer` with the season rate from `stats`, when he has played. */
+export function valued(id: string, dump: Json, proj: Json, key: string, byes: Map<string, number>, stats: Json): Valued {
+  const s = stats[id];
+  return { ...wplayer(id, dump, proj, key, byes), ...(s?.gp > 0 && Number.isFinite(s[key]) ? { ppg: round2(s[key] / s.gp) } : {}) };
+}
+
+/** Season totals, or none before the season has any. */
+export const seasonStats = (client: SleeperClient, season: string): Promise<Json> => client.seasonStats(season).catch((e) => { if (e instanceof NotFound) return {}; throw e; });
+
+/** The best worth among the healthy free agents bucketed at `pos`, null when none has one. The buckets, not every free agent, so a one-game rate with no role is not the bar. */
+export function replacementWorth(f: Pick<WaiverFacts, 'free' | 'buckets'>, pos: string): number | null {
+  const ws = (f.buckets[pos] ?? []).map((id) => f.free[id]).filter((p) => p && !UNAVAILABLE.has(p.inj ?? '')).flatMap((p) => worth(p) ?? []);
+  return ws.length ? Math.max(...ws) : null;
+}
+
+/** Worth over the best free agent at the player's own position, so players at different positions compare; null when either has no figure. */
+export function overReplacement(f: Pick<WaiverFacts, 'free' | 'buckets'>, p: Valued): number | null {
+  const w = worth(p);
+  const r = replacementWorth(f, p.pos);
+  return w === null || r === null ? null : round2(w - r);
+}
+
 const settingsOf = (r: Json) => r.settings ?? {};
 
 /** Positions short of the starting slots (plus a skill-position backup), and the weeks a bye leaves the team short. */
@@ -78,7 +102,7 @@ export function teamNeeds(players: WPlayer[], slots: string[], positions: string
     const short = required(pos) + (COVER[pos] ?? 0) - healthy.filter((p) => p.pos === pos).length;
     return short > 0 ? [[pos, short]] : [];
   }));
-  const byes = Array.from({ length: BYE_LEAD + 1 }, (_, i) => week + i).flatMap((w) => positions.flatMap((pos) => {
+  const byes = Array.from({ length: BYE_LEAD + 1 }, (_, i) => week + i).flatMap((w) => positions.filter((pos) => w === week || !STREAMED.has(pos)).flatMap((pos) => {
     const here = healthy.filter((p) => p.pos === pos);
     const out = here.filter((p) => p.bye === w).length;
     const short = required(pos) - (here.length - out);
@@ -124,13 +148,13 @@ export async function buildWaiverFacts(deps: WaiverDeps, snap: Json, input: Line
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
   const [dump, proj, schedule, adds, research, stats] = await Promise.all([
-    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.trending('add', 24, TRENDING_LIMIT), client.research(league.season, input.week), client.seasonStats(league.season).catch((e) => { if (e instanceof NotFound) return {}; throw e; }),
+    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.trending('add', 24, TRENDING_LIMIT), client.research(league.season, input.week), seasonStats(client, league.season),
   ]);
   const type = WAIVER_TYPES[league.settings?.waiver_type ?? 0];
   if (!type) throw new Error(`sleeper: unknown waiver_type ${league.settings?.waiver_type}`);
   const key = ptsKey(league.scoring_settings?.rec);
   const byes = byeWeeks(schedule);
-  const wp = (id: string): Valued => ({ ...wplayer(id, dump, proj, key, byes), ...(stats[id]?.gp > 0 && Number.isFinite(stats[id][key]) ? { ppg: round2(stats[id][key] / stats[id].gp) } : {}) });
+  const wp = (id: string): Valued => valued(id, dump, proj, key, byes, stats);
   const slots = lineupSlots(league.roster_positions);
   const positions = POSITIONS.filter((pos) => slots.some((s) => fits(s, pos)));
   const budget = league.settings?.waiver_budget ?? 0;
