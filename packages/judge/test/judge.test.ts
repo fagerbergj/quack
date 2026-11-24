@@ -144,6 +144,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   assert.equal(v2.score, 1);
   const says = v2.checks.find((c: any) => c.id === 'says_why');
   assert.deepEqual(says.resolvers, { clef: 1, worker: 1 }, 'f1 by Clef, f2 escalated');
+  assert.deepEqual(says.escalated, { unsure: 1 }, 'f2 left Clef unsure; f1 settled there');
   assert.equal(says.met, 1);
   const preference = v2.checks.find((c: any) => c.id === 'preference_only');
   assert.equal(preference.units, 1, 'only the blocking finding');

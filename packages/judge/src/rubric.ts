@@ -35,6 +35,10 @@ export type Check = {
 export type Criterion = { id: string; checks: Check[] };
 export type Rubric = { name: string; version: number; threshold: number; criteria: Criterion[] };
 
+/** Why an item left the decision model: `declared` never asked of it, `unsure`, `pass-only-no` a confident no a pass-only check does not take, `over-window` too large or unanswered, `refused` a durable error, `outage` a request never answered (the item stays undecided). */
+export type Cause = 'declared' | 'unsure' | 'pass-only-no' | 'over-window' | 'refused' | 'outage';
+export const CAUSES: Cause[] = ['declared', 'unsure', 'pass-only-no', 'over-window', 'refused', 'outage'];
+
 /** One check's result: a decided fold (true or false), the share of items that held, or null when no item applies or the fold is undecided. */
 export type CheckResult = {
   criterion: string;
@@ -45,6 +49,8 @@ export type CheckResult = {
   units: number;
   /** This round's settlements by resolver: `code`, or the modelId of the model that answered (the decision model, or the judge model an escalation reached); with `reused` they cover the settled items. */
   resolvers: Record<string, number>;
+  /** Items escalated from the decision model this round, plus those an outage left undecided, by cause; absent when none, and on verdicts from before it was recorded. */
+  escalated?: Partial<Record<Cause, number>>;
   /** Items whose answer was reused from an earlier round in this session, by item id to the version first judged on; absent when none. */
   reused?: Record<string, number>;
   notes: string[];

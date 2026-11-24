@@ -4,7 +4,7 @@ import { randomInt } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
-import { armAt, budget, replayJudge, table, type Arm, type Expect, type Row } from './judge-replay.ts';
+import { armAt, budget, causesOf, replayJudge, table, type Arm, type Expect, type Row } from './judge-replay.ts';
 
 const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model][:reuse]]... [--repeat N] [--concurrency N] [--seed N] [--rows <rows.jsonl>] [--report-checks <id>...] [--decision-only [--expect <labels.json>]] [--budget] | --table <rows.jsonl> [--report-checks <id>...] [--expect <labels.json>] [--budget]';
 const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, seed: { type: 'string' }, rows: { type: 'string' }, table: { type: 'string' }, 'report-checks': { type: 'string', multiple: true }, 'decision-only': { type: 'boolean' }, expect: { type: 'string' }, budget: { type: 'boolean' } } });
@@ -16,7 +16,7 @@ if (expect && !values.table && !values['decision-only']) throw new Error('--expe
 // --budget: each arm's checks by escalation rate after the table; a check over budget fails the command.
 function printBudget(rows: Row[]): number {
   if (!values.budget) return 0;
-  const { lines, unhealthy } = budget(rows.map((r) => ({ key: `${r.arm} ${r.rubric ?? '?'} ${r.criterion ?? '?'}.${r.check}`, clef: r.clef, esc: r.esc, route: r.route })));
+  const { lines, unhealthy } = budget(rows.map((r) => ({ key: `${r.arm} ${r.rubric ?? '?'} ${r.criterion ?? '?'}.${r.check}`, clef: r.clef, esc: r.esc, route: r.route, causes: causesOf(r) })));
   console.log(['', 'escalation budget (escalated / asked per arm, rubric and check):', ...lines].join('\n'));
   return unhealthy ? 1 : 0;
 }

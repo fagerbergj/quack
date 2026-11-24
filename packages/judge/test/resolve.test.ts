@@ -515,3 +515,22 @@ test('at escalations: 1, a deciding answer is counted before the next waiter tak
   assert.equal(escalated, 1, 'no extra item escalates once the first deciding pass is counted');
   assert.deepEqual(answered.map((a) => a.answer?.met), [true, undefined, undefined]);
 });
+
+test('each item that leaves the decision model carries its cause, and one Clef settled carries none', async () => {
+  const causeOf = async (api: unknown, r: DecisionModelRef, ask: Record<string, unknown> = {}) => (await answerItems(api as never, { ref: r, memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1), retry: { sleep: async () => {}, random: () => 0, log: () => {} } }, [{ unit, checks: [{ ...checks[0], ...ask }] }], BACKGROUND_CONTEXT))[0].answer!.cause;
+  const reply = (probability: number) => callApi(async () => ({ stopReason: 'stop', answers: { q0: { type: 'bool', probability } } }));
+  assert.equal(await causeOf(reply(0.95), ref), undefined);
+  assert.equal(await causeOf(reply(0.5), ref), 'unsure');
+  assert.equal(await causeOf(reply(0.05), ref, { decisionModel: PASS_ONLY }), 'pass-only-no');
+  assert.equal(await causeOf(reply(0.95), ref, { decisionModel: false }), 'declared');
+  assert.equal(await causeOf(reply(0.95), { ...ref, maxInputTokens: 1 }), 'over-window');
+  assert.equal(await causeOf(callApi(async () => ({ stopReason: 'error', answers: {}, errorMessage: '400 Bad Request' })), ref), 'refused');
+  assert.equal(await causeOf(callApi(() => Promise.reject(new Error('503 busy'))), ref), 'outage');
+});
+
+test('with no decision model an escalated item records no cause', async () => {
+  const api = callApi(async () => confident);
+  const [a] = await answerItems(api as never, { memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks }], BACKGROUND_CONTEXT);
+  assert.equal(a.answer!.cause, undefined);
+  assert.equal(a.answer!.resolver, 'agent-model');
+});

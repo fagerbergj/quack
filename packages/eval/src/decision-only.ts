@@ -1,9 +1,8 @@
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { PASS_ONLY, passingOptions, type CheckDecl } from '@quack/judge';
+import { CAUSES, PASS_ONLY, passingOptions, type Cause, type CheckDecl } from '@quack/judge';
 
-/** Why the decision model left an item to the judge model; `outage` is a request it was sent and never answered, `refused` one it answered with a durable error. */
-export type Cause = 'declared' | 'unsure' | 'pass-only-no' | 'over-window' | 'refused' | 'outage';
-export const CAUSES: Cause[] = ['declared', 'unsure', 'pass-only-no', 'over-window', 'refused', 'outage'];
+export { CAUSES, type Cause };
+
 /** An item under decision-only: the decision model's pass or standing no, an escalation (unanswered) by cause, or `unasked` once its check had decided. */
 export type Outcome = 'pass' | 'no' | Cause | 'unasked';
 

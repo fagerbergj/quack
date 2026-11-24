@@ -6,6 +6,6 @@ export { publish, scoresOf, summarize, type Blocks } from './report.ts';
 export { adaptersOf, adapterScores, blocksOf, servicesOf } from './adapters.ts';
 export { countsOf, tally } from './escalation-report.ts';
 export { outcomes, type Outcome } from './decision-only.ts';
-export { armAt, budget, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from './judge-replay.ts';
+export { armAt, budget, causesOf, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from './judge-replay.ts';
 export { drive, driveTool, stopChild, untilSettled, type Answered, type Invocation, type Policy, type Settled, type Verdict } from './driver.ts';
 export { eachArm, eachItem, type Failure } from './pool.ts';

@@ -5,12 +5,12 @@ import { createHash } from 'node:crypto';
 import { agentModel, decide, modelResolver, observeGeneration, parseDecision, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
 import { PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
-import type { Unit } from './rubric.ts';
+import type { Cause, Unit } from './rubric.ts';
 
 /** A decision model such as Clef, reached through pi-ai's models.classify. */
 export type DecisionModelRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };
 
-export type Answer = { met: boolean | null; resolver: string; note?: string };
+export type Answer = { met: boolean | null; resolver: string; note?: string; /** Why the item left the decision model; absent when it settled there. */ cause?: Cause };
 
 // Clef's tokenizer packs code at about 3 bytes a token, so the usual 4-byte rule puts units over its cap below it.
 const BYTES_PER_TOKEN = 3;
@@ -218,6 +218,13 @@ export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
 export type Need = (unit: Unit, check: Ask) => boolean;
 
+// Mirrors the cause names `--decision-only` reads off the memos; a null from the decision model is over the cap, or a refusal.
+function causeOf(over: boolean, probabilities: Record<string, number> | null | undefined, p: number | undefined, check: Ask, act: number): Cause {
+  if (check.decisionModel === false) return 'declared';
+  if (p === undefined) return probabilities === null && !over ? 'refused' : 'over-window';
+  return check.decisionModel === PASS_ONLY && 1 - p >= act ? 'pass-only-no' : 'unsure';
+}
+
 async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context) {
   // The suffix predates the decision-model name; recorded memos are keyed by it, so renaming it would re-ask them.
   const key = items.length === 1 ? `${s.memo}:${items[0].unit.id}:classifier` : `${s.memo}:${items[0].unit.id}+${items.length}:classifier`;
@@ -257,8 +264,9 @@ type Done = (p: Pending, a: Answer | undefined) => Promise<void>;
 export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>, need: Need = () => true): Promise<Answered[]> {
   const pairs = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check })));
   const out = new Map<Pending, Answered>();
+  const causes = new Map<Pending, Cause>();
   const done = async (a: Pending, answer: Answer | undefined) => {
-    const answered = { unit: a.unit, check: a.check, answer };
+    const answered = { unit: a.unit, check: a.check, answer: answer && causes.has(a) ? { ...answer, cause: causes.get(a) } : answer };
     out.set(a, answered);
     await onAnswer?.(answered);
   };
@@ -275,9 +283,15 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
   // An unreachable decision model leaves its items undecided for the round to ask again, instead of loading the judge model.
   const stalled = probabilities === undefined ? asked.filter((x) => x.check.decisionModel !== false) : [];
-  for (const a of stalled) await done(a, { met: null, resolver: 'none' });
+  for (const a of stalled) {
+    causes.set(a, 'outage');
+    await done(a, { met: null, resolver: 'none' });
+  }
   s.hold?.heard(asked);
   const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check));
+  // Without a decision model nothing left one, so no cause is recorded.
+  const over = probabilities === null && !!s.ref && tokensOf(items) > s.ref.maxInputTokens;
+  if (s.ref) for (const a of unsure) causes.set(a, causeOf(over, probabilities, a.p, a.check, act));
   // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
   const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await asking(s, [a], () => escalate(api, s, a.unit, a.check, ctx)) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.
