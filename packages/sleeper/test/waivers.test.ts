@@ -202,10 +202,11 @@ test('drop_ladder fails the week-12 kicker claims that cost Jordyn Tyson, then M
 
 test('drop_ladder fails the week-9 cards: a DEF for a bye two weeks out, and kickers costing a skill player above the cheapest one', async () => {
   const f = real.week9;
-  const cheaper = (who: string) => `${who} is not the bench or IR player least over his replacement, too dear for a K`;
+  const cheaper = (who: string) => `${who} is not the bench player least over his replacement, too dear for a K`;
   const v4 = await ladder(f, [['Drew Stevens', 'KC Concepcion Jr.'], ['New York Giants', 'Colston Loveland']]);
   const loveland = 'DEF New York Giants fills no empty DEF slot this week, so it cannot cost TE Colston Loveland (0.63 above the best free TE)';
-  assert.deepEqual(v4, { met: 0, detail: `${OUT}${cheaper('WR KC Concepcion Jr. (3.19 below the best free WR)')}; ${loveland}` });
+  // With Tyson on IR out of the comparison, Concepcion is the cheapest bench player, so claim 1 now passes.
+  assert.deepEqual(v4, { met: 0.5, detail: `${OUT}${loveland}` });
   const corum = cheaper('RB Blake Corum (0.71 above the best free RB)');
   assert.deepEqual(await ladder(f, [['Drew Stevens', 'Blake Corum']]), { met: 0, detail: `${OUT}${corum}` });
   const v6 = await ladder(f, [['Tyler Bass', 'Blake Corum'], ['Eddy Pineiro', 'Blake Corum'], ['New Orleans Saints', 'KC Concepcion Jr.']]);
@@ -213,12 +214,18 @@ test('drop_ladder fails the week-9 cards: a DEF for a bye two weeks out, and kic
 });
 
 test('drop_ladder passes a kicker into this week\'s empty slot for the spare player least over his replacement, never an only TE cover', async () => {
-  // Week 9 had no kicker; Jordyn Tyson, a receiver on IR projecting 4.81, is the spare player least over his replacement.
-  assert.deepEqual(await ladder(real.week9, [['Drew Stevens', 'Jordyn Tyson'], ['Tyler Bass', 'Jordyn Tyson']]), { met: 1, detail: undefined });
+  // Week 9 had no kicker; KC Concepcion Jr. is the bench player least over his replacement.
+  assert.deepEqual(await ladder(real.week9, [['Drew Stevens', 'KC Concepcion Jr.'], ['Tyler Bass', 'KC Concepcion Jr.']]), { met: 1, detail: undefined });
   // Week 12 with the kicker on bye this week: Blake Corum (11.55) is cheaper over replacement than Michael Mayer (7.91), the only bench TE.
   const f = { ...real.week12, table: real.week12.table.map((t) => ({ ...t, byes: [{ week: 12, pos: 'K', out: 1, short: 1 }] })) };
   assert.equal((await ladder(f, [['Drew Stevens', 'Blake Corum']])).met, 1);
   assert.deepEqual(await ladder(f, [['Drew Stevens', 'Michael Mayer']]), { met: 0, detail: `${OUT}TE Michael Mayer (2.38 below the best free TE) is the only bench TE, too dear for a K` });
+});
+
+test('drop_ladder fails any drop of a player in an IR slot, which holds a free slot and makes no room', async () => {
+  const tyson = 'Jordyn Tyson is on IR, which takes no bench spot, so dropping him makes no room';
+  assert.deepEqual(await ladder(real.week9, [['Tyler Bass', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}${tyson}` });
+  assert.deepEqual(await ladder(real.week9, [['Drew Stevens', 'Jordyn Tyson'], ['Tyler Bass', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}${tyson}; ${tyson}` });
 });
 
 test('a K or DEF bye is a hole only this week; a skill-position bye counts inside the lead time', () => {

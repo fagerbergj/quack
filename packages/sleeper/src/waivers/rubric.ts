@@ -13,24 +13,25 @@ const slotOpen = (f: WaiverFacts, pos: string) => {
   return (mine?.needs[pos] ?? 0) > 0 || !!mine?.byes.some((b) => b.pos === pos && b.week === f.week);
 };
 
-/** Whether `drop` is the bench or IR skill player least over his replacement, leaving out an only QB or TE cover. */
+/** Whether `drop` is the bench skill player least over his replacement, leaving out an only QB or TE cover. IR players hold a free slot, so they are neither dropped nor compared. */
 function cheapest(f: WaiverFacts, drop: Mine): boolean {
   const dv = overReplacement(f, drop);
-  if (drop.role === 'starter' || onlyCover(f, drop) || dv === null) return false;
-  return Object.values(f.roster).every((p) => p.role === 'starter' || STREAMED.has(p.pos) || onlyCover(f, p) || (overReplacement(f, p) ?? Infinity) >= dv);
+  if (drop.role !== 'bench' || onlyCover(f, drop) || dv === null) return false;
+  return Object.values(f.roster).every((p) => p.role !== 'bench' || STREAMED.has(p.pos) || onlyCover(f, p) || (overReplacement(f, p) ?? Infinity) >= dv);
 }
 
 /** What is wrong with one claim's drop, in position terms, or null when the ladder allows it. */
 function ladderFlaw(f: WaiverFacts, r: Candidate): string | null {
   const drop = f.roster[r.drop.player.id];
   const add = f.free[r.player.id];
+  if (drop.role === 'ir') return `${drop.name} is on IR, which takes no bench spot, so dropping him makes no room`;
   const dv = overReplacement(f, drop);
   if (STREAMED.has(drop.pos) || dv === null) return null;
   const what = `${drop.pos} ${drop.name} (${above(dv, drop.pos)})`;
   if (STREAMED.has(add.pos)) {
     if (!slotOpen(f, add.pos)) return `${add.pos} ${add.name} fills no empty ${add.pos} slot this week, so it cannot cost ${what}`;
     if (cheapest(f, drop)) return null;
-    return `${what} is ${onlyCover(f, drop) ? `the only bench ${drop.pos}` : 'not the bench or IR player least over his replacement'}, too dear for a ${add.pos}`;
+    return `${what} is ${onlyCover(f, drop) ? `the only bench ${drop.pos}` : 'not the bench player least over his replacement'}, too dear for a ${add.pos}`;
   }
   const av = overReplacement(f, add);
   if (av === null || dv <= av || cheapest(f, drop)) return null;
@@ -113,7 +114,7 @@ export const waiversDeclaration: Declaration = {
 // Waivers weights are unreplayed: replay them before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 9,
+  version: 10,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
