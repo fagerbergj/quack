@@ -349,10 +349,16 @@ const SUPPORTED_WEIGHT = 1;
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
 // One question per claim and source: Clef passed unstated findings when one item held a whole finding and every source it cites.
+// The report's own reasoning is on no page, so an inference that follows from the finding's facts passes; the facts are each judged on their own.
 const STATES: Question = {
   type: 'choice',
-  instructions: `Does this source state the claim? The finding, when shown, only says what the claim refers to; judge the claim alone.${FAIR}`,
-  options: { states: 'The source states what the claim says.', contradicts: 'The source says something different from the claim.', silent: 'The source does not say this.' },
+  instructions: `Does this source state the claim? The finding, when shown, gives what the claim refers to and the facts the report states beside it; judge this claim, not the others.${FAIR}`,
+  options: {
+    states: 'The source states what the claim says.',
+    contradicts: 'The source says something different from the claim.',
+    reasoning: "The claim is the report's own inference, not a fact about the world, and it follows from facts the finding states. A claim that gives a number, date, name or quote the finding's other sentences do not is a fact, never reasoning, however it is worded.",
+    silent: 'The source does not say this.',
+  },
 };
 
 /** How each model check of researchRubric is asked: per sentence of a finding and kept source it cites, with that source's excerpt. */
@@ -362,14 +368,14 @@ export const reportDeclaration: Declaration = {
     source: { split: { name: 'research.claimSources', from: ['report', 'sources'] }, piece: 'claim', context: { source: { name: 'research.sourceExcerpt', from: 'sources' } } },
   },
   checks: {
-    // A claim holds once one source states it; one that a source contradicts and none states fails as any unstated claim does.
-    supported_by_source: { scope: 'source', aggregate: { name: 'grouped', groupBy: 'claim', inner: 'any', outer: 'share', pass: ['states'] }, question: STATES },
+    // A claim holds once one source states it or it is reasoning that follows; one that a source contradicts and none states fails as any unstated claim does.
+    supported_by_source: { scope: 'source', aggregate: { name: 'grouped', groupBy: 'claim', inner: 'any', outer: 'share', pass: ['states', 'reasoning'] }, question: STATES },
   },
 };
 
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 11,
+  version: 12,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
