@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { listSessions, type Version } from './api.ts';
 import { Home } from './Home.tsx';
 import { sessionTitle } from './kinds.ts';
@@ -26,7 +26,8 @@ export function useWorkspaceData() {
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
   const [served, setServed] = useState<Version>();
-  const [tick, setTick] = useState(0);
+  // A person's own change re-reads here without reopening the stream.
+  const reload = useRef(() => {});
   useEffect(() => {
     let live = true;
     let reading = false, again = false;
@@ -50,6 +51,7 @@ export function useWorkspaceData() {
       es.addEventListener('hello', (m) => setServed(JSON.parse(m.data) as Version));
       es.onerror = () => { if (es?.readyState === EventSource.CLOSED) retry = setTimeout(open, REOPEN_MS); };
     };
+    reload.current = () => void refresh();
     void refresh();
     open();
     const clock = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -59,8 +61,8 @@ export function useWorkspaceData() {
       clearTimeout(retry);
       clearInterval(clock);
     };
-  }, [tick]);
-  return { rows, error, now, served, reload: () => setTick((t) => t + 1) };
+  }, []);
+  return { rows, error, now, served, reload: () => reload.current() };
 }
 
 export type WorkspaceData = ReturnType<typeof useWorkspaceData>;
