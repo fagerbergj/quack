@@ -28,11 +28,11 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   return { met: ok ? 1 : 0, detail: ok ? undefined : `the findings call for ${expected}, the verdict says ${r.verdict ?? 'nothing'}` };
 }
 
-// v0's five code-reviewer criteria, kept to checks that caught a real fault in a prod review; reviewDeclaration says how each
+// v0's code-reviewer criteria, kept to checks that caught a real fault in a prod review; reviewDeclaration says how each
 // model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 20,
+  version: 21,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -42,9 +42,6 @@ export const reviewerRubric: Rubric = {
       { id: 'cites_existing_lines', label: "Cites a line that doesn't exist", weight: 'gate', code: citesExistingLines },
       { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3, miss: 4 },
       { id: 'verified_names_evidence', label: 'Says verified without saying what was run', weight: 2 },
-    ] },
-    { id: 'constructive_actionable', checks: [
-      { id: 'shows_proposed_change', label: 'Proposes a change without showing the code', weight: 2 },
     ] },
     { id: 'severity_grounded', checks: [
       { id: 'anchor_borne_out', label: "Blocking issue isn't backed by the code", weight: 3 },
@@ -64,8 +61,8 @@ const defect = (instructions: string): Question => ({ type: 'bool', instructions
 const SHARE = { name: 'share' } as const;
 
 // Findings of every label see the CI result, the same for all, so a review's findings pack into few decision-model requests.
-const findings = (where?: 'truthy' | 'falsy'): Scope => ({
-  split: { name: 'jsonItems', from: 'findings', pick: ['text', 'citedCode'], ...(where ? { where: [{ path: 'blocking', op: where }] } : {}) },
+const findings = (where: 'truthy' | 'falsy'): Scope => ({
+  split: { name: 'jsonItems', from: 'findings', pick: ['text', 'citedCode'], where: [{ path: 'blocking', op: where }] },
   piece: 'finding',
   context: { ci: { name: 'json', from: 'facts', pointer: '/ci' } },
 });
@@ -182,7 +179,6 @@ export const reviewDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     verified: { split: { name: 'listItems', from: 'review', sections: ['Verified'] }, piece: 'item', context: { sources: { name: 'github.namedSources' } } },
-    finding: findings(),
     blocking: findings('truthy'),
     nonblocking: findings('falsy'),
     citation: { split: { name: 'github.citations', from: 'citations' }, piece: 'excerpt' },
@@ -198,7 +194,6 @@ export const reviewDeclaration: Declaration = {
     matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?') },
     // An item that names a source holds in code, so Clef is asked only of items that name none.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
-    shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change in a fenced block with a language tag, or in inline backticks when it fits on one line (or does it propose no specific change)?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },
     wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Does this finding, though not labelled blocking, describe wrong output, a crash or data loss?') },

@@ -77,8 +77,8 @@ A list prints one page, of at most `--page-size` rows (the server's default 100,
 $ quack show --verdict 'github:fagerbergj/quack#2238'
 ...
 Verdicts
-github.review v1  passed  score 0.87  github.reviewer@13
-  constructive_actionable.shows_proposed_change: finding-1: The finding proposes a one-line assertion but describes it only in prose ...
+github.review v1  passed  score 0.87  github.reviewer@21
+  claims_grounded.verified_names_evidence: item 2: The item says the tests pass without naming what was run ...
 ```
 
 ## Extension apps
