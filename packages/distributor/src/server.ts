@@ -157,8 +157,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const removing = new Map<string, Promise<void>>();
   // Requests per key past that wait: one may be starting or calling the process, so a delete is refused until it ends.
   const serving = new Map<string, number>();
-  // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
-  const active = new Map<string, boolean>();
   // Each running session's wait for a model slot as of its last sweep, overlaid on its Sessions API row.
   const waits = new Map<string, ModelWait>();
   const wakeTimers = new Map<string, () => void>();
@@ -228,7 +226,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
   async function stopSession(key: string, at: number | undefined) {
-    active.delete(key);
     waits.delete(key);
     marked.delete(key);
     wakeFailures.delete(key);
@@ -262,10 +259,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     for (const key of waits.keys()) if (!running.includes(key)) waits.delete(key);
     for (const key of running) {
       try {
-        const { status, wake, waitingOnHuman, waiting } = await ping(key);
+        const { status, wake, waiting } = await ping(key);
         if (waiting) waits.set(key, waiting);
         else waits.delete(key);
-        active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
         await mark(key, status === 'HealthyBusy', wake?.at);
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
@@ -294,7 +290,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => (marked.has(key) ? now() : undefined)))));
   }
 
-  // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
+  // Only the eval driver calls /approvals, but reading them must not keep a session warm or start an idle one;
   // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
     if ((await driver.agentOf(key)) === undefined) return sendProblem(res, 404, 'no such session');
@@ -413,7 +409,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     wakeFailures.delete(key);
     if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
-    active.delete(key);
     waits.delete(key);
     console.log(`session ${key} deleted`);
     return 'deleted';
