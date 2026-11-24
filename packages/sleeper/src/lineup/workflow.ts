@@ -40,7 +40,7 @@ export function factsPrompt(f: Facts): string {
     `Week ${f.week}, ${f.team} (${f.record}) against ${f.opponent ?? 'a bye'}.`,
     ...(f.context && Object.keys(f.context).length ? [CONTEXT_LEGEND] : []),
     `Best lineup by projection (the baseline; Out, IR, Doubtful and Sus excluded):\n${base.join('\n')}`,
-    ...(bench.length ? [`Context for the close-call bench players:\n${bench.join('\n')}`] : []),
+    ...(bench.length ? [`Context for the other close calls:\n${bench.join('\n')}`] : []),
     `Locked slots, final this week:\n${locked.join('\n') || 'none'}`,
     `Open slots with the players who can fill them:\n${open.join('\n')}`,
     ...(Object.values(f.news).some((n) => n.length) ? ['Linked news is dated. A newer report from a credible source (the team, the league or a named beat reporter) beats the Sleeper designation, which lags; when they conflict, say which you followed.'] : []),

@@ -25,14 +25,14 @@ const finderSchema = obj({
 }, { open: true });
 
 const links = (news: News, id: string) => (news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('');
-const roster = (f: TradeFacts, news: News) => Object.values(f.mine.players).sort((a, b) => a.role.localeCompare(b.role) || b.proj - a.proj).map((p) => `  - ${line(p)} [${p.role}]${contextTail(f.context, p.id)}${links(news, p.id)}`).join('\n');
+const roster = (f: TradeFacts, news: News) => Object.values(f.mine.players).sort((a, b) => a.role.localeCompare(b.role) || b.proj - a.proj).map((p) => `  - ${line(p)} [${p.role}]${links(news, p.id)}${contextTail(f.context, p.id)}`).join('\n');
 const standing = (s: Side, of: number) => `${s.team} (${s.record}, ${s.rank} of ${of}, ${s.stance}); needs ${JSON.stringify(s.needs)}; bye holes ${JSON.stringify(s.byes)}`;
 const header = (f: TradeFacts) => `Week ${f.week}, ${standing(f.mine, f.teams)}. The league has ${f.teams} teams and ${f.playoffTeams} playoff spots; public trade charts assume 12 teams.`;
 
 const NEWS_RULE = 'Linked news is dated. A newer report from a credible source beats the Sleeper designation, which lags; when they conflict, say which you followed.';
 
 export function finderPrompt(f: TradeFacts, news: News): string {
-  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}${contextTail(f.context, id)}${links(news, id)}`).join('\n') || '    none'}`);
+  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}${links(news, id)}${contextTail(f.context, id)}`).join('\n') || '    none'}`);
   return [
     header(f),
     ...(f.context && Object.keys(f.context).length ? [TRADE_LEGEND] : []),

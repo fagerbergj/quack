@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildFacts, buildTradeFacts, buildWaiverFacts, createSleeperClient, liveLeague } from '../src/index.ts';
-import { contextLines, dvpRanks, faDepth, fetchRecent, starterBar, type Recent } from '../src/context.ts';
+import { contextLines, dvpRanks, faDepth, fetchRecent, type Recent } from '../src/context.ts';
+import { replacementWorth } from '../src/waivers/facts.ts';
+import type { TradeFacts } from '../src/trades/facts.ts';
 import { factsPrompt as lineupPrompt } from '../src/lineup/workflow.ts';
 import { factsPrompt as waiversPrompt } from '../src/waivers/workflow.ts';
 import { finderPrompt } from '../src/trades/workflow.ts';
@@ -56,8 +58,17 @@ test('recent form reads his team\'s games newest first, with usage, team scoring
   const c = contextLines(['t1', 'q2'], { dump, schedule, key: 'pts_ppr', week: 3, recent: small });
   assert.equal(c.t1, 'L2 12/-, snap 80%, 7 tgt/g, vs AAA #1, 6-4-1 12ppg +3.5, QB Backup (Starter Out), Two Out');
   assert.equal(c.q2, 'no recent data, vs AAA, 6-4-1 12ppg +3.5, Starter Out', 'a QB names the QB who is out, not a QB line');
-  const season = contextLines(['t1'], { dump, schedule, key: 'pts_ppr', week: 3, recent: small, weekly: false });
-  assert.equal(season.t1, 'L2 12/-, snap 80%, 7 tgt/g, 6-4-1 12ppg, QB Backup (Starter Out), Two Out', 'a trade row leaves out this week\'s matchup and spread');
+  const brief = contextLines(['t1'], { dump, schedule, key: 'pts_ppr', week: 3, recent: small, brief: true });
+  assert.equal(brief.t1, 'L2 12/-, snap 80%, 7 tgt/g, QB Backup (Starter Out), Two Out', 'a trade row keeps form, usage and who is out');
+});
+
+test('an RB\'s catches count as touches in a game with no carries', () => {
+  // Week 7 of Emmett Johnson (13337): Sleeper omits rush_att when he had no carries.
+  const carryless = (week12['/v1/stats/nfl/regular/2026/7'] as Record<string, Record<string, number>>)['13337'];
+  assert.equal(carryless.rush_att, undefined);
+  const recent: Recent = { weeks: [{ week: 2, stats: { r1: carryless } }, { week: 1, stats: { r1: row({ rush_att: 10, rec: 1, off_snp: 30, tm_off_snp: 60 }) } }], scores: [] };
+  const c = contextLines(['r1'], { dump: { r1: { last_name: 'Back', team: 'BBB', position: 'RB' } }, schedule, key: 'pts_ppr', week: 3, recent, brief: true });
+  assert.equal(c.r1, 'L2 4/0, snap 39%, 6.5 tch/g', '(2 + 11) touches over 2 games');
 });
 
 test('a missing week, a failed endpoint or no recent stats degrades to "no recent data", never a failed job', async () => {
@@ -72,11 +83,12 @@ test('a missing week, a failed endpoint or no recent stats degrades to "no recen
   assert.ok(Object.keys(waivers.context).length && Object.keys(trades.context).length);
 });
 
-test('free agents per position are counted against the starter bar, which is an input', () => {
+test('free agents per position are counted against the bar, and waivers sets it at replacement worth', async () => {
   const free = [{ pos: 'K', v: 8 }, { pos: 'K', v: 7 }, { pos: 'K', v: 6 }, { pos: 'TE', v: null }];
-  const value = (p: { v: number | null }) => p.v;
-  assert.deepEqual(starterBar([{ pos: 'K', v: 7 }, { pos: 'TE', v: 9 }, { pos: 'TE', v: 5 }], value), { K: 7, TE: 5 });
-  assert.deepEqual(faDepth(free, { K: 7, TE: 5 }, value), ['K: 2 FA ≥ 7', 'TE: 0 FA ≥ 5']);
+  assert.deepEqual(faDepth(free, { K: 7, TE: 5 }, (p) => p.v), ['K: 2 FA ≥ 7', 'TE: 0 FA ≥ 5']);
+  const { waivers } = await jobFacts();
+  const k = waivers.depth.find((d) => d.startsWith('K: '));
+  assert.match(k!, new RegExp(`≥ ${Math.round(replacementWorth(waivers, 'K')! * 10) / 10}$`));
 });
 
 test('week 12: Mayer reads Bowers out, Henry reads QB DeVito with Maye out', async () => {
@@ -87,15 +99,41 @@ test('week 12: Mayer reads Bowers out, Henry reads QB DeVito with Maye out', asy
   assert.equal(waivers.context[HENRY], 'L4 4/7/6/14, snap 48%, 4 tgt/g, vs LAC #16, 5-5 21ppg +1.5, QB DeVito (Maye Out)');
 });
 
+/** Week 12 with eight more free agents trending, so waivers lists the [MARKED] rows a live run adds. */
+async function marked() {
+  const { waivers } = await jobFacts();
+  const listed = new Set(Object.values(waivers.buckets).flat());
+  const extra = Object.values(waivers.free).filter((p) => !listed.has(p.id) && p.pos !== 'DEF').slice(0, 8).map((p) => ({ player_id: p.id, count: 100 }));
+  assert.equal(extra.length, 8);
+  return { ...week12, '/v1/players/nfl/trending/add': extra };
+}
+
+// The rows as they were before context: no context map, no depth line and, on trade rows, no season rate.
+const bareTrades = (f: TradeFacts): TradeFacts => {
+  const side = <S extends TradeFacts['mine']>(s: S): S => ({ ...s, players: Object.fromEntries(Object.entries(s.players).map(([id, { ppg: _, ...p }]) => [id, p])) });
+  return { ...f, context: {}, mine: side(f.mine), partners: f.partners.map(side) };
+};
+
 test('each job\'s task text carries the context lines within its size budget', async () => {
-  const { lineup, waivers, trades } = await jobFacts();
+  const { lineup, waivers, trades } = await jobFacts(await marked());
+  assert.equal(waivers.widely.length, 8);
   const sizes = {
     lineup: tokens(lineupPrompt(lineup)) - tokens(lineupPrompt({ ...lineup, context: {} })),
     waivers: tokens(waiversPrompt(waivers)) - tokens(waiversPrompt({ ...waivers, context: {}, depth: [] })),
-    trades: tokens(finderPrompt(trades, {})) - tokens(finderPrompt({ ...trades, context: {} }, {})),
+    trades: tokens(finderPrompt(trades, {})) - tokens(finderPrompt(bareTrades(trades), {})),
   };
   assert.ok(lineupPrompt(lineup).includes(`QB: Joe Burrow 24.46 | ${lineup.context['6770']}`), 'the baseline carries each starter\'s context');
   assert.ok(waiversPrompt(waivers).includes(waivers.context[MAYER]) && waiversPrompt(waivers).includes(waivers.depth[0]));
+  for (const id of waivers.widely) assert.ok(waiversPrompt(waivers).includes(`[MARKED] | ${waivers.context[id]}`), 'a marked free agent carries its line');
   assert.ok(finderPrompt(trades, {}).includes(trades.context[MAYER]));
-  assert.ok(sizes.lineup <= 250 && sizes.waivers <= 1000 && sizes.trades <= 600, JSON.stringify(sizes));
+  // Measured 211, 907 and 603 on this week. Trades counts the new season column too, so its "about 600" gets a 25-token margin.
+  assert.ok(sizes.lineup <= 250 && sizes.waivers <= 1000 && sizes.trades <= 625, JSON.stringify(sizes));
+});
+
+test('a close call the baseline leaves out still gets its context line', async () => {
+  const { lineup } = await jobFacts();
+  // Tyson (13281) 15 sits inside CLOSE_GAP of Nabers' 16.2, but the baseline starts Nabers.
+  const f = { ...lineup, players: { ...lineup.players, 13281: { ...lineup.players['13281'], proj: 15 } } };
+  assert.ok(!f.baseline.some((b) => b.id === '13281'));
+  assert.ok(lineupPrompt(f).includes(`Context for the other close calls:\nJordyn Tyson 15 | ${f.context['13281']}`));
 });

@@ -35,12 +35,12 @@ export function factsPrompt(f: WaiverFacts): string {
   const mine = f.table.find((t) => t.mine)!;
   const teams = f.table.map((t) => `${t.mine ? 'YOU ' : ''}${t.team}: ${faab ? `$${t.faabLeft} left` : `priority ${t.priority}`}; needs ${JSON.stringify(t.needs)}; bye holes ${JSON.stringify(t.byes)}`);
   const wide = new Set(f.widely);
-  const free = Object.entries(f.buckets).map(([pos, ids]) => `${pos}\n${ids.map((id) => `  - ${line(f.free[id])}, owned ${f.free[id].owned ?? '?'}%, ${f.free[id].adds ?? 'no'} adds/24h${wide.has(id) ? ' [MARKED]' : ''}${contextTail(f.context, id)}${links(f, id)}`).join('\n')}`);
-  const roster = Object.values(f.roster).sort((a, b) => a.role.localeCompare(b.role)).map((p) => `  - ${line(p)} [${p.role}]${contextTail(f.context, p.id)}${links(f, p.id)}`);
+  const free = Object.entries(f.buckets).map(([pos, ids]) => `${pos}\n${ids.map((id) => `  - ${line(f.free[id])}, owned ${f.free[id].owned ?? '?'}%, ${f.free[id].adds ?? 'no'} adds/24h${wide.has(id) ? ' [MARKED]' : ''}${links(f, id)}${contextTail(f.context, id)}`).join('\n')}`);
+  const roster = Object.values(f.roster).sort((a, b) => a.role.localeCompare(b.role)).map((p) => `  - ${line(p)} [${p.role}]${links(f, p.id)}${contextTail(f.context, p.id)}`);
   return [
     `Week ${f.week}, ${f.team}. Waiver type: ${f.waiverType}${faab ? `, $${mine.faabLeft} left` : `, your priority ${f.myPriority} of ${f.teams}`}.`,
     `League competition:\n${teams.join('\n')}`,
-    ...(f.depth?.length ? [`Free agents at or above your weakest starter's worth, by position: ${f.depth.join('; ')}`] : []),
+    ...(f.depth?.length ? [`Free agents at or above replacement worth (the best healthy listed free agent's), by position: ${f.depth.join('; ')}`] : []),
     ...(f.context && Object.keys(f.context).length ? [CONTEXT_LEGEND] : []),
     `Free agents by position (ownership and adds are platform-wide):\n${free.join('\n')}`,
     `Your roster:\n${roster.join('\n')}`,

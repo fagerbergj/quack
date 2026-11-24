@@ -1,6 +1,6 @@
 import type { Json, SleeperClient } from '../client.ts';
 import { contextLines, fetchRecent } from '../context.ts';
-import { kickoffsByGame, voidGame } from '../games.ts';
+import { kickoffsByGame, UNAVAILABLE, voidGame } from '../games.ts';
 import { newsFor, type Searchable } from './news.ts';
 import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
 
@@ -36,8 +36,7 @@ export type Facts = {
 export type LineupInput = { league: string; week: number; owner: string };
 export type FactsDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
 
-// Out, IR, Doubtful and suspended players are not lineup candidates; Questionable ones are, and the model weighs them.
-export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
+export { UNAVAILABLE } from '../games.ts';
 export const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 /** A bench player this close to a starter's projection makes the slot a close call. */
 export const CLOSE_GAP = 3;

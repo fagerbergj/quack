@@ -3,6 +3,9 @@ import type { Json } from './ports.ts';
 // The scores feed was seen spelling it 'cancelled'; the schedule feed has been documented as 'canceled'. Either voids the game.
 const VOID = new Set(['cancelled', 'canceled', 'postponed']);
 
+// Out, IR, Doubtful and suspended players do not play this week; Questionable ones may, and the model weighs them.
+export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
+
 /** A game that will not be played at its listed time, by its schedule `status` or its score `metadata.status`. */
 export const voidGame = (status: unknown) => VOID.has(String(status));
 

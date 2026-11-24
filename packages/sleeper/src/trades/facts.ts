@@ -30,7 +30,7 @@ export type TradeFacts = {
   mine: Side;
   /** Every other team. */
   partners: Side[];
-  /** Per player the prompt shows (your roster and partner surplus), one line of recent form, usage and team; a trade outlasts this week's matchup. */
+  /** Per player the prompt shows (your roster and partner surplus), one line of recent form, usage and who is out; a trade outlasts this week's matchup. */
   context: Record<string, string>;
 };
 
@@ -95,7 +95,7 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const sides: Side[] = rosters.map((r: Json) => sideOf(r, ctx));
   const mine = sides.find((s) => s.rosterId === roster.roster_id)!;
   const partners = sides.filter((s) => s !== mine);
-  const context = contextLines([...Object.keys(mine.players), ...partners.flatMap((p) => p.surplus)], { dump, schedule, key, week: input.week, recent, weekly: false });
+  const context = contextLines([...Object.keys(mine.players), ...partners.flatMap((p) => p.surplus)], { dump, schedule, key, week: input.week, recent, brief: true });
   return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners, context };
 }
 
