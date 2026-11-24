@@ -56,7 +56,7 @@ export const tradeDeclaration: Declaration = {
 // Trade weights are unreplayed: replay them before any weight gates delivery.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
-  version: 6,
+  version: 7,
   threshold: 0.8,
   criteria: [
     { id: 'case_is_reasoned', checks: [

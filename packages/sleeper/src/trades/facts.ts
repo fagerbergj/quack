@@ -1,11 +1,10 @@
-import { NotFound, type Json, type SleeperClient } from '../client.ts';
-import { contextLines, fetchRecent, seasonPpg } from '../context.ts';
+import type { Json, SleeperClient } from '../client.ts';
+import { contextLines, fetchRecent } from '../context.ts';
 import { ownerTeam, POSITIONS, ptsKey, UNAVAILABLE, type LineupInput } from '../lineup/facts.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
-import { byeWeeks, COVER, teamNeeds, wplayer, type Bye, type WPlayer } from '../waivers/facts.ts';
+import { byeWeeks, COVER, seasonStats, STREAMED, teamNeeds, valued, worth, type Bye, type Valued } from '../waivers/facts.ts';
 
-/** `ppg` is season points per game in the league's scoring, absent before he has played. */
-export type TPlayer = WPlayer & { role: 'starter' | 'bench' | 'ir'; ppg?: number };
+export type TPlayer = Valued & { role: 'starter' | 'bench' | 'ir' };
 export type Stance = 'contender' | 'rebuilder';
 /** One team as the trade jobs see it: standing, what it lacks and what it can spare. `surplus` is player ids. */
 export type Side = {
@@ -39,15 +38,15 @@ export type FinderInput = LineupInput;
 export type TradeDeps = { client: SleeperClient };
 
 // Kickers and defenses are streamed, not traded.
-export const TRADEABLE = POSITIONS.filter((p) => p !== 'K' && p !== 'DEF');
-const byProj = (a: WPlayer, b: WPlayer) => b.proj - a.proj || a.id.localeCompare(b.id);
+export const TRADEABLE = POSITIONS.filter((p) => !STREAMED.has(p));
+const byWorth = (a: Valued, b: Valued) => (worth(b) ?? 0) - (worth(a) ?? 0) || a.id.localeCompare(b.id);
 
-/** Healthy players left once each position keeps its starting slots plus one skill-position cover, best projection first. */
-function surplusOf(players: WPlayer[], slots: string[]): string[] {
+/** Healthy players left once each position keeps its starting slots plus one skill-position cover, by worth so a starter on bye is kept. */
+function surplusOf(players: Valued[], slots: string[]): string[] {
   const healthy = players.filter((p) => !UNAVAILABLE.has(p.inj ?? ''));
   return TRADEABLE.flatMap((pos) => {
     const keep = slots.filter((s) => s === pos).length + (COVER[pos] ?? 0);
-    return healthy.filter((p) => p.pos === pos).sort(byProj).slice(keep).map((p) => p.id);
+    return healthy.filter((p) => p.pos === pos).sort(byWorth).slice(keep).map((p) => p.id);
   });
 }
 
@@ -60,7 +59,7 @@ function standings(rosters: Json[]): Map<number, number> {
   return new Map(order.map((r, i) => [r.roster_id, i + 1]));
 }
 
-type Ctx = { users: Json[]; slots: string[]; positions: string[]; week: number; ranks: Map<number, number>; playoffTeams: number; dump: Json; wp: (id: string) => WPlayer & { ppg?: number } };
+type Ctx = { users: Json[]; slots: string[]; positions: string[]; week: number; ranks: Map<number, number>; playoffTeams: number; dump: Json; wp: (id: string) => Valued };
 
 function sideOf(r: Json, c: Ctx): Side {
   const user = c.users.find((u) => u.user_id === r.owner_id);
@@ -87,14 +86,12 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
-  const [dump, proj, schedule, season, recent] = await Promise.all([
-    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.seasonStats(league.season).catch((e) => { if (e instanceof NotFound) return {}; throw e; }), fetchRecent(client, league.season, input.week),
-  ]);
+  const [dump, proj, schedule, stats, recent] = await Promise.all([client.players(), client.projections(league.season, input.week), client.schedule(league.season), seasonStats(client, league.season), fetchRecent(client, league.season, input.week)]);
   const byes = byeWeeks(schedule);
   const key = ptsKey(league.scoring_settings?.rec);
   const slots = lineupSlots(league.roster_positions);
   const playoffTeams = league.settings?.playoff_teams ?? Math.ceil(rosters.length / 2);
-  const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => ({ ...wplayer(id, dump, proj, key, byes), ...seasonPpg(season, id, key) }) };
+  const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => valued(id, dump, proj, key, byes, stats) };
   const sides: Side[] = rosters.map((r: Json) => sideOf(r, ctx));
   const mine = sides.find((s) => s.rosterId === roster.roster_id)!;
   const partners = sides.filter((s) => s !== mine);

@@ -18,7 +18,7 @@ import {
   liveLeague, buildWaiverFacts, manifest, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversDeclaration, waiversInputsOf, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
-import { closeCalls, wideOwned, worth } from '../src/waivers/facts.ts';
+import { closeCalls, teamNeeds, wideOwned, worth } from '../src/waivers/facts.ts';
 import type { WaiverDecision } from '../src/waivers/card.ts';
 import { sleeperJudge } from './judge.ts';
 
@@ -59,7 +59,7 @@ const gate = async (id: string, f: WaiverFacts, c: unknown) => {
   const content = JSON.stringify(c);
   return check.code!(content, (await buildEvidence(waiversDeclaration, waiversInputsOf(f, content))).evidence);
 };
-const GATES = ['drop_not_worth_more', 'widely_owned_accounted'];
+const GATES = ['drop_ladder', 'widely_owned_accounted'];
 
 test('facts hold the waiver context, the competition table, bucketed free agents and the roster roles from the recorded week', async () => {
   const f = await factsOf();
@@ -139,27 +139,28 @@ test('each drop carries its roster role and each add its bye, copied from the fa
   assert.equal(starter.candidates[0].drop.role, 'starter');
 });
 
-test('drop_not_worth_more fails a drop worth more than its add, naming both, by season rate when the week has no projection', async () => {
+test('drop_ladder fails a skill drop worth more over replacement than its add, naming both, by season rate when the week has no projection', async () => {
   const { f } = await card();
   // A McCaffrey: no projection this week (bye or injury) but a 15-a-game season.
   const star = { ...f, roster: { ...f.roster, '101': { ...f.roster['101'], proj: 0 } } };
   const bad = buildWaiversCard(star, { ...rollingDecision, claims: [{ add: '304', drop: '101', why: 'Tim claims the TE bye.' }] });
-  const r = await gate('drop_not_worth_more', star, bad);
+  const r = await gate('drop_ladder', star, bad);
   assert.equal(r.met, 0);
-  assert.match(r.detail!, /Ray Rush \(15\) is worth more than Tim Tight \(7\)/);
-  assert.equal((await gate('drop_not_worth_more', f, buildWaiversCard(f, rollingDecision))).met, 1);
+  assert.match(r.detail!, /RB Ray Rush \(2.6 above the best free RB\) is worth more over replacement than TE Tim Tight \(0 above the best free TE\)/);
+  assert.equal((await gate('drop_ladder', f, buildWaiversCard(f, rollingDecision))).met, 1);
 });
 
-test('drop_not_worth_more passes a dearer drop that is the cheapest bench player, and names a cheaper bench player otherwise', async () => {
+test('drop_ladder passes a dearer skill drop that is the bench player least over his replacement, and names no other drop otherwise', async () => {
   const { f } = await card();
   const set = (w: Record<string, number>) => ({ ...f, roster: Object.fromEntries(Object.entries(f.roster).map(([id, p]) => [id, p.role === 'bench' ? { ...p, proj: w[id] ?? 20, ppg: undefined } : p])) });
   const claim = (facts: WaiverFacts) => buildWaiversCard(facts, { ...rollingDecision, claims: [{ add: '304', drop: '103', why: 'Tim claims the TE bye.' }] });
-  const cheapest = set({ '103': 9, '110': 12 });
-  assert.equal((await gate('drop_not_worth_more', cheapest, claim(cheapest))).met, 1);
-  const cheaper = set({ '103': 9, '110': 8 });
-  const r = await gate('drop_not_worth_more', cheaper, claim(cheaper));
+  // By points Bo Bench (12) is cheaper, but over the best free player at his own position Dan Dash (0.2) is.
+  const cheapest = set({ '103': 12.6, '110': 12 });
+  assert.equal((await gate('drop_ladder', cheapest, claim(cheapest))).met, 1);
+  const cheaper = set({ '103': 13, '110': 11.5 });
+  const r = await gate('drop_ladder', cheaper, claim(cheaper));
   assert.equal(r.met, 0);
-  assert.match(r.detail!, /Dan Dash \(9\) is worth more than Tim Tight \(7\); drop Bo Bench \(8\) first/);
+  assert.equal(r.detail, 'the drop is out of order: RB Dan Dash (0.6 above the best free RB) is worth more over replacement than TE Tim Tight (0 above the best free TE)');
 });
 
 test('a drop who is Out or on IR is worth his week, not his season rate, so the gate does not block dropping him', () => {
@@ -175,14 +176,63 @@ test('empty season stats still build the facts, omit the season rate and compare
   assert.ok(Object.values(f.roster).every((p) => p.ppg === undefined));
   assert.ok(!/season/.test(JSON.stringify(f)));
   const { card: c } = await card(empty);
-  assert.equal((await gate('drop_not_worth_more', f, c)).met, 1);
+  assert.equal((await gate('drop_ladder', f, c)).met, 1);
   const bad = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '304', drop: '101', why: 'Tim claims the TE bye.' }] });
-  assert.match((await gate('drop_not_worth_more', f, bad)).detail!, /Ray Rush \(15.4\) is worth more than Tim Tight \(7\)/);
+  assert.match((await gate('drop_ladder', f, bad)).detail!, /RB Ray Rush \(3 above the best free RB\)/);
   const none = { ...f, roster: { ...f.roster, '101': { ...f.roster['101'], proj: 0 } } };
-  assert.equal((await gate('drop_not_worth_more', none, bad)).met, 1);
+  assert.equal((await gate('drop_ladder', none, bad)).met, 1);
   const { '/v1/stats/nfl/regular/2026': _s, ...noStats } = base;
   const gone = factsOf(noStats);
   assert.ok(Object.values((await gone).roster).every((p) => p.ppg === undefined));
+});
+
+// Week-12 and week-9 facts rebuilt from the league's recorded Sleeper data (league and team renamed), for the owner-labelled prod cards.
+const real = JSON.parse(readFileSync(new URL('./fixtures/waivers-real.json', import.meta.url), 'utf8')) as { week12: WaiverFacts; week9: WaiverFacts };
+const idOf = (f: WaiverFacts, name: string) => [...Object.values(f.free), ...Object.values(f.roster)].find((p) => p.name === name)!.id;
+const claimsOf = (f: WaiverFacts, pairs: Array<[string, string]>) =>
+  buildWaiversCard(f, { claims: pairs.map(([add, drop]) => ({ add: idOf(f, add), drop: idOf(f, drop), why: `${add} for ${drop}.` })), passed: [], summary: 'Claims.' });
+const ladder = (f: WaiverFacts, pairs: Array<[string, string]>) => gate('drop_ladder', f, claimsOf(f, pairs));
+const OUT = 'the drop is out of order: ';
+
+test('drop_ladder fails the week-12 kicker claims that cost Jordyn Tyson, then Michael Mayer, to cover a kicker bye two weeks out', async () => {
+  const f = real.week12;
+  assert.deepEqual(await ladder(f, [['Drew Stevens', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}K Drew Stevens fills no empty K slot this week, so it cannot cost WR Jordyn Tyson (1.91 above the best free WR)` });
+  assert.deepEqual(await ladder(f, [['Drew Stevens', 'Michael Mayer']]), { met: 0, detail: `${OUT}K Drew Stevens fills no empty K slot this week, so it cannot cost TE Michael Mayer (2.38 below the best free TE)` });
+});
+
+test('drop_ladder fails the week-9 cards: a DEF for a bye two weeks out, and kickers costing a skill player above the cheapest one', async () => {
+  const f = real.week9;
+  const cheaper = (who: string) => `${who} is not the bench or IR player least over his replacement, too dear for a K`;
+  const v4 = await ladder(f, [['Drew Stevens', 'KC Concepcion Jr.'], ['New York Giants', 'Colston Loveland']]);
+  const loveland = 'DEF New York Giants fills no empty DEF slot this week, so it cannot cost TE Colston Loveland (0.63 above the best free TE)';
+  assert.deepEqual(v4, { met: 0, detail: `${OUT}${cheaper('WR KC Concepcion Jr. (3.19 below the best free WR)')}; ${loveland}` });
+  const corum = cheaper('RB Blake Corum (0.71 above the best free RB)');
+  assert.deepEqual(await ladder(f, [['Drew Stevens', 'Blake Corum']]), { met: 0, detail: `${OUT}${corum}` });
+  const v6 = await ladder(f, [['Tyler Bass', 'Blake Corum'], ['Eddy Pineiro', 'Blake Corum'], ['New Orleans Saints', 'KC Concepcion Jr.']]);
+  assert.deepEqual(v6, { met: 0, detail: `${OUT}${corum}; ${corum}; DEF New Orleans Saints fills no empty DEF slot this week, so it cannot cost WR KC Concepcion Jr. (3.19 below the best free WR)` });
+});
+
+test('drop_ladder passes a kicker into this week\'s empty slot for the spare player least over his replacement, never an only TE cover', async () => {
+  // Week 9 had no kicker; Jordyn Tyson, a receiver on IR projecting 4.81, is the spare player least over his replacement.
+  assert.deepEqual(await ladder(real.week9, [['Drew Stevens', 'Jordyn Tyson'], ['Tyler Bass', 'Jordyn Tyson']]), { met: 1, detail: undefined });
+  // Week 12 with the kicker on bye this week: Blake Corum (11.55) is cheaper over replacement than Michael Mayer (7.91), the only bench TE.
+  const f = { ...real.week12, table: real.week12.table.map((t) => ({ ...t, byes: [{ week: 12, pos: 'K', out: 1, short: 1 }] })) };
+  assert.equal((await ladder(f, [['Drew Stevens', 'Blake Corum']])).met, 1);
+  assert.deepEqual(await ladder(f, [['Drew Stevens', 'Michael Mayer']]), { met: 0, detail: `${OUT}TE Michael Mayer (2.38 below the best free TE) is the only bench TE, too dear for a K` });
+});
+
+test('a K or DEF bye is a hole only this week; a skill-position bye counts inside the lead time', () => {
+  const p = (id: string, pos: string) => ({ id, name: id, pos, team: 'DAL', inj: null, proj: 5, bye: 14 });
+  const players = [p('k', 'K'), p('w', 'WR')];
+  assert.deepEqual(teamNeeds(players, ['K', 'WR'], ['K', 'WR'], 12).byes, [{ week: 14, pos: 'WR', out: 1, short: 1 }]);
+  assert.deepEqual(teamNeeds(players, ['K', 'WR'], ['K', 'WR'], 14).byes.map((b) => b.pos), ['K', 'WR']);
+});
+
+test('bye_coverage skips a K hole past this week in facts recorded before it was dropped', async () => {
+  const hole = (week: number) => ({ ...real.week12, table: real.week12.table.map((t) => ({ ...t, byes: [{ week, pos: 'K', out: 1, short: 1 }] })) });
+  const rb = claimsOf(real.week12, [['Rhamondre Stevenson', 'Blake Corum']]);
+  assert.equal((await gate('bye_coverage', hole(14), rb)).met, 0);
+  assert.equal((await gate('bye_coverage', hole(12), rb)).met, 1);
 });
 
 const forgetsWire: WaiverDecision = { ...rollingDecision, claims: [rollingDecision.claims[0]], passed: [] };
@@ -273,7 +323,7 @@ test('the workflow seals a rolling-league card and the judge passes it, with no 
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@8', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@9', [], true]);
   assert.deepEqual(verdict.checks.filter((k) => k.id === 'close_call_news').map((k) => [k.units, k.met]), [[0, null]]);
   assert.ok(judged.some((q) => /role and usage/.test(q)) && !judged.some((q) => /close top claim or drop/.test(q)));
 });
@@ -282,7 +332,7 @@ test('the workflow seals a FAAB card with its bids, and with a news source the c
   const { sealed, verdict, judged, record } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(faab, async () => [item]), sealed.content), 'the recording rebuilds the inputs the judge read');
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@8', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@9', [], true]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });

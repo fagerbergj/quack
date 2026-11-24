@@ -273,6 +273,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: Bu
     p.left--;
     if (answer) p.answers.set(unit.id, answer);
     // Resolvers count settled items only; an item no model could answer is the check's undecided, and is not kept.
+    if (answer?.cause) p.result.escalated = { ...p.result.escalated, [answer.cause]: (p.result.escalated?.[answer.cause] ?? 0) + 1 };
     if (answer && answer.met !== null) {
       p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
       await reuse?.keep(check, unit, answer);

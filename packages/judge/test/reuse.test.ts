@@ -161,3 +161,11 @@ test('a prompt version bump asks every stored item again', async () => {
   await round(api, opts, 2);
   assert.deepEqual(seen.clef, ['a', 'b', 'a', 'b']);
 });
+
+test('a reused answer is not an escalation: only the items asked this round are counted in escalated', async () => {
+  const { api } = sessionApi((row) => (row === 'a' || row === 'd' ? 0.5 : 0.95), () => said('yes'));
+  const v1 = await round(api, optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b') }), 1);
+  assert.deepEqual([v1.checks[0].escalated, v1.checks[0].reused], [{ unsure: 1 }, undefined]);
+  const v2 = await round(api, optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'd') }), 2);
+  assert.deepEqual([v2.checks[0].escalated, v2.checks[0].reused], [{ unsure: 1 }, { 'rows a': 1, 'rows b': 1 }], 'a, escalated on v1, is reused and not counted again');
+});
