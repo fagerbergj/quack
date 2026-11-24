@@ -1,6 +1,6 @@
 {
   "name": "sleeper-trade-finder",
-  "version": 8,
+  "version": 9,
   "status": "draft",
   "prompt": "prompt.md",
   "extensions": {
