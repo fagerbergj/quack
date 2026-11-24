@@ -365,6 +365,7 @@ test('review pushes while the reviewer runs are one steer on the newest head whe
     end();
     await until(() => invocations.length > 0);
     await until(() => false);
+    assert.equal(invocations.length, 1, 'one steer, not one per push');
     assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-ev3/steer/reviewer', 'steer']]);
     assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
   } finally {

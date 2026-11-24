@@ -18,18 +18,31 @@ export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item
   let timer: ReturnType<Timers['setInterval']> | undefined;
   const stop = () => { timers.clearInterval(timer); timer = undefined; };
 
+  // A run end that finds the key mid-attempt is remembered, and the attempt goes once more when it fails; any number collapse into one.
+  const again = new Set<string>();
+  async function work(key: string, stored: string) {
+    trying.add(key);
+    try {
+      for (let item = stored; ; ) {
+        again.delete(key);
+        if (await attempt(key, JSON.parse(item) as T)) return await store.removeIf(key, item);
+        const next = again.has(key) ? (await store.list()).find((e) => e.key === key) : undefined;
+        if (!next) return;
+        item = next.item;
+      }
+    } catch (err) {
+      console.warn(`github: queued start for ${key} failed, will retry: ${String(err)}`);
+    } finally {
+      trying.delete(key);
+      again.delete(key);
+    }
+  }
+
   async function tick(session?: string) {
     for (const { key, item } of await store.list()) {
       if (session !== undefined && !key.startsWith(`${session} `)) continue;
-      if (trying.has(key)) continue;
-      trying.add(key);
-      try {
-        if (await attempt(key, JSON.parse(item) as T)) await store.removeIf(key, item);
-      } catch (err) {
-        console.warn(`github: queued start for ${key} failed, will retry: ${String(err)}`);
-      } finally {
-        trying.delete(key);
-      }
+      if (trying.has(key)) session !== undefined && again.add(key);
+      else await work(key, item);
     }
   }
   // An empty sweep is one read; the timer stays armed so work added mid-sweep is never stranded.
