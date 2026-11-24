@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { buildEvidence, decisionModelTokens, PASS_ONLY, score, type CheckResult } from '@quack/judge';
-import { parseReview, reviewDeclaration, reviewKind, resolveCitedPath, reviewInputs, reviewerRubric, validateReview } from '../src/index.ts';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { buildEvidence, decisionModelTokens, PASS_ONLY, rejudge, score, type CheckResult } from '@quack/judge';
+import { parseReview, PullRequestDoc, reviewDeclaration, reviewKind, resolveCitedPath, reviewInputs, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
 import { namedSources } from '../src/rubric.ts';
 
@@ -153,6 +154,42 @@ test('promises_handled asks only sentences that name code or a file, each with t
   assert.deepEqual(reported.map((u) => u.id), ['promise opening.s2', 'promise opening.s5'], 'a promise a blocking finding names was reported, so it is not asked');
   const cited = await promiseUnits(body, PROMISE_DIFF, '- blocking (defect): docs/cli.md:5 — the verbose line is wrong\n');
   assert.deepEqual(cited.map((u) => u.id), ['promise opening.s2', 'promise opening.s4', 'promise opening.s5'], 'the path a finding cites is not its prose');
+});
+
+test('a sentence keeps its item while one of its names is not in a blocking finding, and the item shows that finding', async () => {
+  const finding = '- blocking (delivery): src/flag.ts:1 — `backoff` is untouched, so nothing doubles\n';
+  const units = await promiseUnits('`backoff` now doubles the `--verbose` retries.\n\n`backoff` doubles the budget.', PROMISE_DIFF, finding);
+  assert.deepEqual(units.map((u) => promiseOf(u).sentence), ['`backoff` now doubles the `--verbose` retries.'], 'only the sentence whose every name is reported is dropped');
+  assert.match(promiseOf(units[0]).review, /^- blocking \(delivery\): src\/flag\.ts:1 — `backoff` is untouched/);
+});
+
+test('two sections sharing a heading give each sentence its own id and its own answer (#2528 review)', async () => {
+  const body = '## What changed\n\nAdds `a.ts`.\n\n## What changed\n\nAdds `b.ts`.';
+  const diff = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n+export const a = 1;\n';
+  const units = await promiseUnits(body, diff);
+  assert.deepEqual(units.map((u) => u.id), ['promise What changed.s2', 'promise What changed.s3']);
+  // Clef passes the sentence the diff delivers and is unsure of the other; the judge model fails that one.
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body, baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
+  const exec = async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o.onOutput?.(diff), { ok: true, value: { exitCode: 0 } });
+  const env = { exec, readTextFile: async () => ({ ok: true, value: 'x\n' }) };
+  const memos = new Map<string, unknown>();
+  const api = {
+    conversationId: 'c', now: () => 0, env, agent: async () => ({}), snapshot: async (doc: unknown) => (doc === PullRequestDoc ? { pr } : undefined),
+    async memo(name: string, ...rest: unknown[]) { if (rest.length === 2 && !memos.has(name)) memos.set(name, rest[0]); return memos.get(name); },
+    models: {
+      getAllModels: () => [{ id: 'clef', type: 'classifier' }],
+      getModel: (provider: string, id: string) => ({ provider, id }),
+      classify: async (_m: unknown, req: { state: unknown; questions: Record<string, unknown> }) => ({ stopReason: 'stop', answers: Object.fromEntries(Object.keys(req.questions).map((q) => [q, { type: 'bool', probability: JSON.stringify(req.state).includes('Adds `a.ts`') ? 0.95 : 0.05 }])) }),
+      completeSimple: async () => ({ stopReason: 'stop', content: [{ type: 'text', text: JSON.stringify({ choice: 'no', confidence: 0.9, reason: 'no hunk adds b.ts' }) }] }),
+    },
+  };
+  const decl = { scopes: { promise: reviewDeclaration.scopes.promise }, checks: { promises_handled: reviewDeclaration.checks.promises_handled } };
+  const rubric = { name: 'r', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'promises_handled', label: 'p', weight: 1 }] }] };
+  const opts = { kind: 'github.review', rubric, declaration: decl, inputs: reviewInputs(), maxRevisions: 0, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' } };
+  const sealed = { kind: 'github.review', version: 1, hash: '', content: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n', sealedAt: 0, verdict: null };
+  const v = await rejudge(api as never, opts as never, sealed as never, 'm', BACKGROUND_CONTEXT);
+  assert.equal(v.checks[0].met, 0.5, 'one sentence held and one failed, each on its own answer');
+  assert.deepEqual(v.checks[0].notes, ['promise What changed.s3: no hunk adds b.ts']);
 });
 
 test('promises_handled matches a name as a token and shows each name no hunk contains, though another name matches (#2528 review)', async () => {

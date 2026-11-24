@@ -1,4 +1,4 @@
-import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, factsOf, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, factsOf, type Inputs, type Question, type Rubric, type Scope } from '@quack/judge';
 import { parseReview, type Citation, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
@@ -32,7 +32,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 17,
+  version: 18,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -132,16 +132,18 @@ const blockingProse = (findings?: string) => (findings ? (JSON.parse(findings) a
   .filter((f) => f.blocking).map((f) => f.text.replace(/^[\w-]+(?: \([^)]*\))?: \S+ /, '')).join('\n');
 
 /** One item per promising description sentence that names code or a file, with the hunks and review text holding those names.
- *  A sentence that names nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
+ *  A sentence that names nothing makes no item, nor does one whose every name a blocking finding repeats: the review reported it. */
 function promiseItems(inputs: Inputs): Chunk[] {
   const hunks = hunksOf(inputs.diff ?? '');
   const s: Shown = { hunks, blocks: blocksOf(inputs.review ?? ''), files: [...new Set(hunks.map((h) => h.file))].join(', ').slice(0, 1000), blocking: blockingProse(inputs.findings) };
-  return promiseParts(inputs).flatMap((part) => sentencesOf(part).flatMap((sentence, n) => {
+  // Numbered over every sentence of both inputs, so two sections sharing a heading still give distinct ids.
+  const sentences = promiseParts(inputs).flatMap((part) => sentencesOf(part).map((sentence) => ({ heading: headingOf(part), sentence })));
+  return sentences.flatMap(({ heading, sentence }, n) => {
     if (REPORTING.test(sentence) || UNCHANGED.test(sentence.split(/;|, so /)[0])) return [];
     const names = namesOf(sentence);
-    if (!names.length || names.some((x) => tokenOf(x).test(s.blocking))) return [];
-    return [{ id: `${headingOf(part)}.s${n + 1}`, text: JSON.stringify(promiseOf(sentence, names, s)) }];
-  }));
+    if (!names.length || names.every((x) => tokenOf(x).test(s.blocking))) return [];
+    return [{ id: `${heading}.s${n + 1}`, text: JSON.stringify(promiseOf(sentence, names, s)) }];
+  });
 }
 registerSplitter('github.promises', promiseItems);
 
@@ -185,6 +187,7 @@ export const reviewDeclaration: Declaration = {
     nonblocking: findings('falsy'),
     citation: { split: { name: 'github.citations', from: 'citations' }, piece: 'excerpt' },
     // promises_handled is pass-only: a sentence whose names no hunk contains is the rare escalation the judge model explains.
+    // github.promises reads these five inputs by name; only the description and issues split into sentences.
     promise: { split: { name: 'github.promises', from: ['description', 'issues', 'diff', 'findings', 'review'] }, piece: 'promise' },
   },
   checks: {
