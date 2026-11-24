@@ -259,9 +259,30 @@ export async function recordedReportInputs(session: RecordedSession, content: st
   return inputsFrom(content, sources, session.readFile);
 }
 
-// Each finding is an item named by its place in the report, so a replay case can name one.
-const findingChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => findingItems(inputs[String(o.from)]).map((f, i) => ({ id: `finding-${i + 1}`, text: f.text }));
-registerSplitter('research.findings', findingChunks);
+let parsed: [string, Record<string, string>] | undefined;
+// Every item of a report reads the same sources input, so it is parsed once, not per item.
+const textsIn = (raw: string) => (parsed?.[0] === raw ? parsed[1] : (parsed = [raw, JSON.parse(raw) as Record<string, string>])[1]);
+
+const SENTENCE = /(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u;
+// A finding's sentences, each one claim; a lead-in ending in ":" only frames the bullets under it, so it claims nothing.
+const sentencesOf = (text: string) => text.split('\n').map((l) => l.replace(/^\s*([-*]|\d+\.)\s+/, '').trim()).flatMap((l) => l.split(SENTENCE))
+  .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(CITATION, '')) && !/:[\s*_]*(\[s\d+\]\s*)*$/.test(t));
+
+/** One item per sentence of a finding and kept source it cites (its own marks, else the finding's), grouped by the sentence ("finding-3.2");
+ *  a sentence of several shares its whole finding, so its items pack and Clef reads what "it" refers to. */
+function claimSources(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const [reportIn, sourcesIn] = [o.from].flat();
+  const kept = new Set(Object.keys(textsIn(inputs[sourcesIn])));
+  return findingItems(inputs[reportIn]).flatMap((f, i) => {
+    const sentences = sentencesOf(f.text);
+    return sentences.flatMap((t, k) => {
+      const claim = `finding-${i + 1}.${k + 1}`;
+      const ids = (citedIds(t).length ? citedIds(t) : citedIds(f.text)).filter((id) => kept.has(id));
+      return ids.map((id) => ({ id: `${claim} ~ ${id}`, key: id, text: t.replace(/\s*\[s\d+\]/g, '').trim(), meta: { claim, ...(sentences.length > 1 && { finding: f.text }) } }));
+    });
+  });
+}
+registerSplitter('research.claimSources', claimSources);
 
 /** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
 export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
@@ -269,14 +290,8 @@ export function parseReport(report: string): { sections: Record<string, string>;
   return { sections: Object.fromEntries(keys.map((k) => [k, sectionBody(report, [k])])), citedIds: citedIds(report), findings: findingItems(report) };
 }
 
-/** The passages of each cited source whose text was kept that say what the finding says; undefined, dropping the finding, when none was kept. */
-function sourceExcerpts(inputs: Inputs, chunk: Chunk, o: SelectorDecl): string | undefined {
-  const texts = JSON.parse(inputs[(o as { from: string }).from]) as Record<string, string>;
-  const ids = citedIds(chunk.text).filter((id) => Object.hasOwn(texts, id));
-  if (!ids.length) return undefined;
-  return JSON.stringify(ids.map((id) => ({ id, text: excerpt(texts[id], chunk.text) })));
-}
-registerSelector('research.excerpts', sourceExcerpts);
+/** The passage of the item's source that says most nearly what its claim says. */
+registerSelector('research.sourceExcerpt', (inputs, chunk, o) => JSON.stringify({ id: chunk.key, text: excerpt(textsIn(inputs[(o as { from: string }).from])[chunk.key!], chunk.text) }));
 
 const sourceTexts = (ev: Evidence) => (ev.sources?.[0]?.state.texts ?? {}) as Record<string, string>;
 
@@ -328,41 +343,39 @@ function quotesExist(artifact: string, ev: Evidence): CodeResult {
   return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? `${listed}. Quote the page as written, or paraphrase without quotation marks.` : undefined };
 }
 
-// Score = share supported less share contradicted; at 0.8, a fifth of the findings may be unstated, or a tenth contradicted.
+// The score is the share of claims some cited source states; at 0.8, a fifth of a report's claims may go unstated.
 const SUPPORTED_WEIGHT = 1;
-const CONTRADICTED_WEIGHT = -1;
 
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
-const bool = (instructions: string): Question => ({ type: 'bool', instructions: `${instructions}${FAIR}` });
-// A pitfall is asked as the defect itself, its item holding on "no" (the fold's `pass`). Its options say what each answer means:
-// a generic "Yes, this holds." beside a question about a defect can be read as the item holding or as the defect being there.
-const defect = (instructions: string, yes: string, no: string): Question => ({ type: 'choice', instructions: `${instructions}${FAIR}`, options: { yes, no } });
+// One question per claim and source: Clef passed unstated findings when one item held a whole finding and every source it cites.
+const STATES: Question = {
+  type: 'choice',
+  instructions: `Does this source state the claim? The finding, when shown, only says what the claim refers to; judge the claim alone.${FAIR}`,
+  options: { states: 'The source states what the claim says.', contradicts: 'The source says something different from the claim.', silent: 'The source does not say this.' },
+};
 
-/** How each model check of researchRubric is asked: per finding, with its kept sources' excerpts. */
+/** How each model check of researchRubric is asked: per sentence of a finding and kept source it cites, with that source's excerpt. */
 export const reportDeclaration: Declaration = {
   scopes: {
     sources: { split: { name: 'whole', from: 'sources' }, piece: 'texts' },
-    // Nothing is shared, so each finding is its own request: shown the request, or batched with others, the 27B passed more unsupported findings.
-    claim: { split: { name: 'research.findings', from: 'report' }, piece: 'finding', context: { sources: { name: 'research.excerpts', from: 'sources' } } },
+    source: { split: { name: 'research.claimSources', from: ['report', 'sources'] }, piece: 'claim', context: { source: { name: 'research.sourceExcerpt', from: 'sources' } } },
   },
   checks: {
-    // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
-    supported_by_source: { scope: 'claim', aggregate: { name: 'share' }, decisionModel: false, question: bool('Does the fetched text of the source this finding cites state what the finding claims?') },
-    contradicted_by_source: { scope: 'claim', aggregate: { name: 'share', pass: ['no'] }, decisionModel: false, question: defect('Does the fetched text of the source this finding cites contradict it?', 'Yes: the source says something different from the finding.', 'No: the source does not say otherwise.') },
+    // A claim holds once one source states it; one that a source contradicts and none states fails as any unstated claim does.
+    supported_by_source: { scope: 'source', aggregate: { name: 'grouped', groupBy: 'claim', inner: 'any', outer: 'share', pass: ['states'] }, question: STATES },
   },
 };
 
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 10,
+  version: 11,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
       { id: 'findings_cited', label: "A finding cites no source", weight: 'gate', code: findingsCited },
       { id: 'quotes_exist', label: "Quotes text that isn't in the source", weight: 'gate', code: quotesExist },
-      { id: 'supported_by_source', label: "A finding isn't stated by its source", weight: SUPPORTED_WEIGHT },
-      { id: 'contradicted_by_source', label: "A finding is contradicted by its source", weight: CONTRADICTED_WEIGHT },
+      { id: 'supported_by_source', label: "A claim isn't stated by any source it cites", weight: SUPPORTED_WEIGHT },
     ] },
   ],
 };
