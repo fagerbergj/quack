@@ -72,7 +72,7 @@ test('a model refusing connections for far longer than five minutes parks the ru
   assert.ok(await clock.until(async () => faux.state.callCount >= 3, HOUR));
   const parked = (await session.standing()).waiting;
   assert.deepEqual([parked?.provider, parked?.ahead, parked?.error], [provider, 0, 'Connection error.']);
-  assert.match(String((await session.standing()).note), new RegExp(`Waiting for ${provider} to answer`));
+  assert.match(String((await session.standing()).note), new RegExp(`^Waiting to retry ${provider}: Connection error\\.$`));
   await session.submit('Capital of Italy?', 'q2', false, 'followUp');
   assert.ok(await clock.until(() => said('Rome'), 2 * HOUR), 'the outage ends and both inputs are answered with no new message');
   assert.ok(await said('Paris'));
@@ -82,13 +82,16 @@ test('a model refusing connections for far longer than five minutes parks the ru
   await session.close();
 });
 
-test('an endpoint still failing past the outage window ends the run with an error naming it and how long it failed', async () => {
+test('an endpoint still failing past the outage window ends the run with an error naming it and how long it retried; the wait shows the error cut short', async () => {
   const clock = new Clock();
-  const { session, provider } = await open('ceiling', Array.from({ length: 40 }, refused), clock, 0.5);
+  const body = `502 Bad Gateway: ${'<html>'.repeat(200)}`;
+  const { session, provider } = await open('ceiling', Array.from({ length: 40 }, () => fauxAssistantMessage('', { stopReason: 'error', errorMessage: body })), clock, 0.5);
   await session.submit('hi', 'q');
   const rows = async () => failedRows(await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT));
+  assert.ok(await clock.until(async () => (await session.standing()).waiting !== null, HOUR));
+  assert.equal((await session.standing()).waiting?.error, `${body.slice(0, 200)}…`);
   assert.ok(await clock.until(async () => (await rows()).length > 0, 2 * HOUR));
-  assert.match((await rows())[0].error, new RegExp(`^${provider} kept failing for \\d+ min, so the run ended\\. Run it again once ${provider} answers\\. Last error: Connection error\\.$`));
+  assert.equal((await rows())[0].error, `The run retried ${provider} for 29 min without an answer, so it ended. Run it again once ${provider} answers. Last error: ${body}`);
   assert.equal((await session.standing()).waiting, null);
   await session.close();
 });

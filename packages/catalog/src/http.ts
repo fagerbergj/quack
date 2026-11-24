@@ -17,8 +17,8 @@ export type SessionsApiDeps = {
   /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it answered,
    * `withdrawn` when the session withdrew the approval, or the session's reason for refusing a malformed answer. */
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
-  /** The session's wait for a model slot, when it is queued for one; shown on its row while it runs. */
-  waiting?(key: string): { since: number; ahead: number; provider: string } | undefined;
+  /** The session's wait for a model slot, shown on its row while it runs; one with `error` is a run waiting to retry its endpoint, shown while stopped too. */
+  waiting?(key: string): { since: number; ahead: number; provider: string; error?: string } | undefined;
   /** The server's build, as GET /version answers it, which the change stream's hello carries. */
   build?(): object;
   setTimer?: SetTimer;
@@ -104,7 +104,9 @@ function resolutionOf(b: Record<string, unknown>) {
 /** The Sessions API's routes over the catalog; false for a request that is not one of them. */
 export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
   const wire = (s: SessionRow) => {
-    const waiting = s.state === 'running' ? deps.waiting?.(s.key) : undefined;
+    // The distributor stops a run sleeping until its next try, so that wait outlives the process; a slot wait does not.
+    const w = deps.waiting?.(s.key);
+    const waiting = s.state === 'running' || (s.state === 'stopped' && w?.error) ? w : undefined;
     return waiting ? { ...sessionWire(s), waiting } : sessionWire(s);
   };
 

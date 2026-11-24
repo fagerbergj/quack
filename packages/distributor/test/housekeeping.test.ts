@@ -96,18 +96,22 @@ test('a failed ping clears the wait, and an exited process loses its entry even 
   assert.equal(await waiting(), undefined, 'the entry of a process that exited is gone before the key runs again');
 });
 
-test('a session stopped while parked on a failing model endpoint keeps its wait on the row; a slot wait goes with the process', async () => {
+test('a session stopped while parked on a failing model endpoint lists as stopped and still waiting; a slot wait goes with the process', async () => {
   const parked = { since: 5, ahead: 0, provider: 'local', error: '502 peer proxy error: connect: no route to host' };
   const clock = { now: () => 1000, setTimer: () => () => {}, idleMs: 0 };
-  const { listed, sweep, state } = await start({ busy: 'busy', ping: { status: 'Healthy', wake: { at: 60_000 }, waiting: parked }, distributor: clock });
-  const waiting = async () => (await listed()).find((s) => s.key === 'busy')?.waiting;
+  const { listed, sweep, state, catalog } = await start({ busy: 'busy', ping: { status: 'Healthy', wake: { at: 60_000 }, waiting: parked }, distributor: clock });
+  const row = async () => (await listed()).find((s) => s.key === 'busy');
   await sweep();
+  // What the driver's onExit does once the stop lands.
   state.running = [];
-  assert.deepEqual(await waiting(), parked, 'stopped until its next try, it still waits on local');
+  await catalog.stopped('busy');
+  assert.deepEqual([(await row())?.state, (await row())?.waiting], ['stopped', parked], 'stopped until its next try, it still waits to retry local');
   await sweep();
-  assert.deepEqual(await waiting(), parked);
+  assert.deepEqual((await row())?.waiting, parked);
   const queued = await start({ busy: 'busy', ping: { status: 'Healthy', wake: { at: 60_000 }, waiting: { since: 5, ahead: 1, provider: 'local' } }, distributor: clock });
   await queued.sweep();
+  queued.state.running = [];
+  await queued.catalog.stopped('busy');
   assert.equal((await queued.listed()).find((s) => s.key === 'busy')?.waiting, undefined);
 });
 

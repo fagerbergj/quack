@@ -47,21 +47,23 @@ async function setRow(root: Conversation, error: string | null, run = 0) {
 /** What the session's model endpoint and retry policy are, for the waiting signal and the failure text. */
 export type ModelFaultSetup = { provider: string; retry: ConversationRetryPolicy; now: () => number };
 
-// A transient error that still ended the run used up the whole retry window, so the row says how long the endpoint failed.
+// A transient error that still ended the run used up the whole retry window, so the row says how long it retried.
 function failureText(detail: string | undefined, setup: ModelFaultSetup): string {
   if (!detail) return 'The model failed.';
   if (!transientModelError({ stopReason: 'error', errorMessage: detail })) return detail;
-  return `${setup.provider} kept failing for ${windowText(setup.retry)}, so the run ended. Run it again once ${setup.provider} answers. Last error: ${detail}`;
+  return `The run retried ${setup.provider} for ${windowText(setup.retry)} without an answer, so it ended. Run it again once ${setup.provider} answers. Last error: ${detail}`;
 }
 
-// A run sleeping in its retry backoff waits on its endpoint; `since` is the streak's first failure this process saw.
+const brief = (text: string) => (text.length > 200 ? `${text.slice(0, 200)}…` : text);
+
+// A run sleeping in its retry backoff (a failed try, or a host stop mid-answer); `since` is the streak's first failure this process saw.
 function parkedWait(setup: ModelFaultSetup) {
   let since = 0;
   return (live: LiveState | undefined) => {
     const g = live?.generation;
     if (!g?.retry) return modelWait.setDown(null);
     if (g.attempt === 1 || !since) since = setup.now();
-    modelWait.setDown({ since, ahead: 0, provider: setup.provider, error: g.retry.error });
+    modelWait.setDown({ since, ahead: 0, provider: setup.provider, error: brief(g.retry.error) });
   };
 }
 

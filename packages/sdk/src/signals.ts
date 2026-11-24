@@ -10,7 +10,14 @@ export type ModelWait = { since: number; ahead: number; provider: string; error?
 let queued: ModelWait | null = null;
 let down: ModelWait | null = null;
 const waitListeners = new Set<(w: ModelWait | null) => void>();
-const publishWait = () => waitListeners.forEach((l) => l(queued ?? down));
+let published = 'null';
+// Listeners hear a change only: the session sets the down wait on every pi.live commit.
+const publishWait = () => {
+  const w = queued ?? down;
+  if (JSON.stringify(w) === published) return;
+  published = JSON.stringify(w);
+  waitListeners.forEach((l) => l(w));
+};
 /** The session's wait on its model: queued for a slot (the capacity extension sets it), else parked on a failing endpoint (the session sets it). */
 export const modelWait = {
   get: () => queued ?? down,

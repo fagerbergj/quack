@@ -96,7 +96,7 @@ test('a session in retry backoff reports its wake time, so the distributor can s
   await new Promise((r) => server.once('listening', r));
   const ping = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ping`).then((r) => r.json());
   const waiting = { since: standing.waiting!.since, ahead: 0, provider: 'faux', error: bad502().errorMessage };
-  assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt }, waiting, note: `Waiting for faux to answer: ${waiting.error}` });
+  assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt }, waiting, note: `Waiting to retry faux: ${waiting.error}` });
   await new Promise((r) => server.close(r));
   await session.close();
 });

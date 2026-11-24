@@ -295,6 +295,6 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   };
 }
 
-const waitNote = (w: ModelWait | null) => (!w ? null : w.error ? `Waiting for ${w.provider} to answer: ${w.error}` : `Waiting for model capacity (${w.ahead} ahead)`);
+const waitNote = (w: ModelWait | null) => (!w ? null : w.error ? `Waiting to retry ${w.provider}: ${w.error}` : `Waiting for model capacity (${w.ahead} ahead)`);
 
 export type Session = Awaited<ReturnType<typeof openSession>>;

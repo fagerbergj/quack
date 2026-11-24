@@ -83,6 +83,15 @@ test('the session list is one keyset page of v8 rows: Money as a decimal string,
   assert.deepEqual((exact.body.sessions as Array<{ key: string }>).map((r) => r.key), ['sleeper:platinum:2']);
 });
 
+test('a stopped session waiting to retry its model endpoint carries that wait; a stopped one queued for a slot does not', async () => {
+  const retrying = { since: 5, ahead: 0, provider: 'local', error: '502 peer proxy error' };
+  deps.waits = { 'review:monorepo': retrying, 'sleeper:platinum:1': { since: 5, ahead: 1, provider: 'local' } };
+  await catalog.stopped('review:monorepo');
+  await catalog.stopped('sleeper:platinum:1');
+  const list = (await call('GET', '/sessions')).body.sessions as Array<{ key: string; state: string; waiting?: unknown }>;
+  assert.deepEqual(list.map((r) => [r.key, r.state, r.waiting]).sort(), [['review:monorepo', 'stopped', retrying], ['sleeper:platinum:1', 'stopped', undefined], ['sleeper:platinum:2', 'idle', undefined]]);
+});
+
 test('a running session queued for a model slot carries its wait; an idle one never does', async () => {
   deps.waits = { 'review:monorepo': { since: 5, ahead: 1, provider: 'local' }, 'sleeper:platinum:1': { since: 5, ahead: 0, provider: 'local' } };
   const list = (await call('GET', '/sessions')).body.sessions as Array<{ key: string; waiting?: unknown }>;
