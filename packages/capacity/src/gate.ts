@@ -41,7 +41,7 @@ export type GateOptions = {
 type Held = {
   idx: number; endpoint: string; busy: boolean; rides: number; riders: Array<() => void>; granted?: true; lent?: true; stopBeat: () => void;
   // While queued at the service: `take` hands it a lease of the run's that came free, `cut` ends its held request.
-  take?: (spare: Held) => void; cut?: () => void;
+  take?: (spare: Held) => boolean; cut?: () => void;
 };
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held; ride?: true };
@@ -95,14 +95,17 @@ export class CapacityGate {
     const lease = done.lease;
     if (done.ride) lease.rides = 0;
     else lease.busy = false;
+    this.#freed(lease);
+  }
+
+  #freed(lease: Held) {
     this.#nextRide(lease);
     // The run keeps its lowest-numbered free lease per endpoint that it is not lending; a parallel call's extra one goes back with the call.
     const idleOn = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint);
     const keep = idleOn.filter((l) => !l.lent).sort((a, b) => a.idx - b.idx)[0];
     for (const l of idleOn) if (l !== keep) void this.#drop(l);
-    // A call of this run queued at the service takes the kept lease over its place, marked busy here so no concurrent begin shares it.
-    const queued = keep && this.#leases.find((l) => l.take && l.endpoint === keep.endpoint);
-    if (queued) queued.take!(Object.assign(keep, { busy: true }));
+    // A call of this run queued at the service takes the kept lease over its place; the first one that accepts it gets it.
+    if (keep) this.#leases.some((l) => l.endpoint === keep.endpoint && l.take?.(keep));
   }
 
   /** The run opened or closed a wait (a person, a child run). Waits count per process, so a child run's calls see its parent's;
@@ -254,11 +257,17 @@ export class CapacityGate {
   // Each acquire after the first is held by the service until the place it reports changes, so nothing here polls.
   async #poll(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
     const cut = new AbortController();
-    // Read after every wake, so a lease handed over in the gap before this resumes is never left busy and unused.
-    let got: Held | undefined;
-    const spare = new Promise<'spare'>((resolve) => (lease.take = (s) => ((got = s), resolve('spare'))));
     lease.cut = () => cut.abort();
     const stop = signal ? AbortSignal.any([signal, cut.signal]) : cut.signal;
+    // Accepted once, marked busy as it is taken; a call aborted or cut refuses it, so the lease stays the run's.
+    let got: Held | undefined;
+    const spare = new Promise<undefined>((resolve) => (lease.take = (s) => {
+      if (stop.aborted) return false;
+      got = Object.assign(s, { busy: true });
+      lease.take = undefined;
+      resolve(undefined);
+      return true;
+    }));
     try {
       let ahead: number | undefined;
       for (;;) {
@@ -268,14 +277,15 @@ export class CapacityGate {
         asked.catch(() => {});
         const r = await Promise.race([asked, spare]).catch((err: unknown) => this.#failed(err, signal, cut.signal));
         if (got) {
-          lease.take = undefined;
+          const taken = got;
+          got = undefined;
           // Its own place goes back only once the request settles, so the release cannot land before the acquire.
           cut.abort();
           await asked.catch(() => {});
           await this.#drop(lease);
-          return got;
+          return taken;
         }
-        if (typeof r !== 'object') return undefined;
+        if (r === undefined || r === 'cut') return undefined;
         if (!this.#leases.includes(lease)) return void (await this.#orphaned(lease));
         if (r.state === 'granted') {
           lease.granted = true;
@@ -287,6 +297,8 @@ export class CapacityGate {
       }
     } finally {
       lease.take = lease.cut = undefined;
+      // A handover accepted while this call unwound from an abort goes back to the run, free.
+      if (got) this.#freed(Object.assign(got, { busy: false }));
     }
   }
 

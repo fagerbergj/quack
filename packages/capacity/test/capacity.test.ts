@@ -359,6 +359,42 @@ test('parallel calls in one session take one lease each and queue past the capac
   assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one of the same run');
 });
 
+test('two calls ending in one tick hand one lease to the run\'s queued call and keep the other free', async () => {
+  fresh(2);
+  const g = gate('s');
+  const [a, b] = [await g.begin('swap'), await g.begin('swap')];
+  let c: GatedCall | undefined;
+  void g.begin('swap').then((t) => (c = t));
+  await clock.settle();
+  g.end(a);
+  g.end(b);
+  await clock.settle();
+  const next = begin(g);
+  await clock.settle();
+  assert.equal(next.granted, true, 'the second lease came back free, not busy with no call');
+  assert.equal(c?.lease, a.lease, 'the queued call took the first handover');
+  assert.deepEqual([heldBy().sort(), table.endpoints()[0].waiting], [['s', 's#1'], []]);
+});
+
+test('a handover that lands as the queued call unwinds from its abort leaves the lease free for the run\'s next call', async () => {
+  fresh(1);
+  const base = direct(table);
+  // The held acquire rejects on its signal, as fetch does, so the abort reaches the gate before the handover.
+  const client: LeaseClient = { ...base, acquire: (e, h, o) => (o?.ahead === undefined ? base.acquire(e, h, o) : new Promise((_, no) => o.signal?.addEventListener('abort', () => no(o.signal!.reason)))) };
+  const g = gate('s', client);
+  const a = await g.begin('swap');
+  const stop = new AbortController();
+  const queued = g.begin('swap', stop.signal);
+  await clock.settle();
+  stop.abort(new Error('stopped'));
+  g.end(a);
+  await assert.rejects(queued, /stopped/);
+  const next = begin(g);
+  await clock.settle();
+  assert.equal(next.granted, true, 'the lease came back free, not busy with no call');
+  assert.deepEqual([heldBy(), table.endpoints()[0].waiting], [['s'], []]);
+});
+
 // Four shared calls begun at once, as a judge round's Clef and escalation calls can be.
 function ride(g: CapacityGate, signal?: AbortSignal) {
   const state: { granted: boolean; call?: GatedCall; error?: unknown } = { granted: false };
