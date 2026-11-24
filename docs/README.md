@@ -2,13 +2,13 @@
 
 The operator CLI is described in [cli.md](cli.md) and the QA rig in [qa.md](qa.md).
 
-## Evidence for pull requests
+## Pull requests
 
-A pull request into the trunk shows green CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR.
+A pull request into the trunk needs green CI: typecheck, tests and sloplint. The tools below measure a prompt, guide or judge change when a number helps a decision; none of them is required.
 
-### Evidence for a prompt or guide change
+### Comparing agent definitions
 
-Replay the same case under the baseline's agent definition and the candidate's, one arm after the other, on local models:
+`main.ts run` replays the same case under the baseline's agent definition and the candidate's, one arm after the other, on local models:
 
 ```
 QUACK_LOCAL_API_KEY=... node packages/eval/src/main.ts run items.json ab deployment.json agents/contracts/agent.json --arm base=<trunk ref> --arm cand=. --guides packages/contracts/skills --out ab.jsonl
@@ -30,11 +30,9 @@ The replay answers the run's asks: a question takes the item's next recorded ans
 
 Each arm prints a line per item with its scores, each kind's sealed versions (pass, or fail with the gates that failed), and the asks it answered, then a summary per arm; `--out` appends each result with its sealed versions' content and verdicts as JSON lines.
 
-### Evidence for a judge or rubric change
+### Replaying the judge
 
-A pure removal of checks may instead be shown by a model-free recount over recorded rounds, because a removed check feeds no other check's answer (the judge only packs units whose `shared` context is identical, `packages/judge/src/resolve.ts:70`); timing claims stay estimates until a replay.
-
-Replay the same recorded cases under the baseline and the candidate, three times each, on local models, the same day:
+`replay-judge.ts` judges the same recorded cases under a baseline and a candidate on local models:
 
 ```
 QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --decision-model clef/clef --arm base=<trunk ref> --arm cand=. --repeat 3 --concurrency 2 --rows rows.jsonl
@@ -96,8 +94,6 @@ To measure a decision-model change, run two arms on the same tree:
 It prints a markdown table of per-repeat `met` (a decided fold as 1 or 0; null: no unit or an undecided fold, the check does not count) and decision-model/escalation counts per case and check for each arm.
 Then, per arm: its model requests by model, the items the decision model settled, escalated and reused (counts the arm order cannot bias), its median and p90 judge seconds per case overall and by place, and the seed.
 Last: every case and check whose `met` values differ between arms, with each arm's values and the judge's notes, for adjudicating false positives, and any case an adapter declined with what its recording lacks.
-
-Paste it into the PR with the cases' provenance.
 
 ## Agent bundles
 

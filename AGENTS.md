@@ -6,5 +6,4 @@
 - Packages reach each other only along the layers in `tools/boundary.ts`: extensions reach core through `@quack/sdk`. `tools/boundary.test.ts` enforces it.
 - Changing anything in an `agents/<name>/` bundle needs a `version` bump in its `agent.json`, then `node tools/bundle-locks.ts` to rewrite the locks.
 - Tests use fake clocks and the injectable timer and fetch seams: no real sleeps, wall clock or network. A flaky test is a defect; fix it or delete it.
-- PR evidence by change kind is in `docs/README.md`. A change to the UI or a page route cites a QA rig run (`docs/qa.md`).
 - Prefer the `quack` CLI (`docs/cli.md`) over raw REST calls.
