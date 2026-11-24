@@ -11,6 +11,13 @@ test('scores earned over possible points, and pitfalls subtract', () => {
   assert.equal(score(rubric, [r('a', 2, 0), r('pit', -4, 1)]).score, 0, 'never below zero');
 });
 
+test('a check with a miss pays it per share missed outside possible; a gate and a rubric without one are unchanged', () => {
+  const withMiss: Rubric = { name: 'r', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'cites', label: 'cited code', weight: 4, miss: 2 }, { id: 'gate', label: 'gate', weight: 'gate' }] }] };
+  assert.equal(score(withMiss, [r('cites', 4, 0.5), r('gate', 'gate', 1)]).score, 0.25, 'half missed loses the share and pays the miss');
+  assert.equal(score(withMiss, [r('cites', 4, 1), r('gate', 'gate', 0.5)]).score, 1, 'a full share pays no miss, and a gate takes none');
+  assert.equal(score(rubric, [r('cites', 4, 0.5)]).score, 0.5, 'a rubric declaring no miss scores as before');
+});
+
 test('a failed gate fails the version whatever the score', () => {
   const s = score(rubric, [r('gate', 'gate', 0.75, 4), r('a', 4, 1)]);
   assert.equal(s.score, 1);

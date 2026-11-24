@@ -23,6 +23,7 @@ import { MoreIcon } from './MoreIcon.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
+import { useStanding } from './delivered.ts';
 import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 import { composerKeyDown } from './composer.ts';
@@ -326,14 +327,15 @@ function useSeed(sessionKey: string, state: SocketState, send: Send) {
 function Running({ view, waiting, active, queued }: { view: View; waiting: boolean; active: boolean; queued?: ModelWait }) {
   if (waiting) return <Working label="Waiting for you" />;
   if (!active) return null;
-  // Queued for a model slot nothing generates, so the line is still: no paddling duck.
-  if (queued) return <p className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>;
   const checks = liveChecks(view.tool?.details);
-  if (!checks) return <Working label={stepLabel(view)} />;
+  // Queued for a model slot nothing generates, so the line is still: no paddling duck. The checks keep their rows.
+  const head = queued
+    ? <p className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>
+    : <Working label={checks ? progressLabel(checks) : stepLabel(view)} />;
   return (
     <>
-      <Working label={progressLabel(checks)} />
-      <CheckProgress checks={checks} />
+      {head}
+      {checks && <CheckProgress checks={checks} />}
     </>
   );
 }
@@ -455,7 +457,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const bottom = useStickToBottom();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
-  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
+  const { stand, markOf } = useStanding(sessionKey, items, approvals, view.running);
+  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about, markOf };
   const chat = chatClass(live);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -471,7 +474,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           <div ref={bottom.content} className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
-              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} />
+              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} markOf={markOf} />
             </SessionKeyContext>
             <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.asks.cards} decide={pending.decide} />
             {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}
@@ -489,7 +492,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         </div>
       </div>
       {live.paneOpen && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
-      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view, queuedWait)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
+      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view, queuedWait)} stand={stand} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
     </div>

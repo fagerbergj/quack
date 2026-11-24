@@ -13,7 +13,7 @@ An entry of intent.guarantees or intent.nonGoals states one checkable fact: give
 Check. A JSON Schema 2020-12 object that compiles. `$schema` is `https://json-schema.org/draft/2020-12/schema`. Put shared shapes in `$defs` and refer to them with local `$ref`s; none remote.
 
 ### descriptions
-Check. Every property has a `description` that says what it means and its unit, not its type. Add `examples` for anything a reader would guess at.
+Check. Every property has a `description` that says what it means and its unit, not its type or how the code fills it. Add `examples` for anything a reader would guess at.
 
 ### naming
 Ask. Suggested: lowerCamelCase property names (AIP-140), one case only; enum values in UPPER_SNAKE_CASE (AIP-126); a timestamp is an RFC 3339 string named `fooTime` (AIP-142); `id` is an opaque string. If the document already exists, keep its case.
@@ -39,7 +39,7 @@ The check follows `properties`, `$defs`, `items` and the like by position; a cha
 
 Adding an optional property, loosening a constraint and adding a `$defs` entry are safe. Widening an enum or type is safe for writers but can break readers that switch on it.
 
-Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers and one migration: what they change to keep working.
+Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers, by file or package, and one migration: what they change to keep working.
 
 ### versioning
 Ask. Suggested: one schema per contract, compatible changes shipped in place (AIP-180); a breaking change is a new document kind or file name (`foo.v2`), with a stated period when both are read. Add a `version` or `kind` field to the document only when readers must pick a parser by it.

@@ -4,11 +4,14 @@ import { randomInt } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
-import { armAt, budget, replayJudge, table, type Arm, type Row } from './judge-replay.ts';
+import { armAt, budget, replayJudge, table, type Arm, type Expect, type Row } from './judge-replay.ts';
 
-const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model][:reuse]]... [--repeat N] [--concurrency N] [--seed N] [--rows <rows.jsonl>] [--report-checks <id>...] [--budget] | --table <rows.jsonl> [--report-checks <id>...] [--budget]';
-const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, seed: { type: 'string' }, rows: { type: 'string' }, table: { type: 'string' }, 'report-checks': { type: 'string', multiple: true }, budget: { type: 'boolean' } } });
+const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model][:reuse]]... [--repeat N] [--concurrency N] [--seed N] [--rows <rows.jsonl>] [--report-checks <id>...] [--decision-only [--expect <labels.json>]] [--budget] | --table <rows.jsonl> [--report-checks <id>...] [--expect <labels.json>] [--budget]';
+const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, seed: { type: 'string' }, rows: { type: 'string' }, table: { type: 'string' }, 'report-checks': { type: 'string', multiple: true }, 'decision-only': { type: 'boolean' }, expect: { type: 'string' }, budget: { type: 'boolean' } } });
 const reportChecks = values['report-checks']?.flatMap((s) => s.split(',').filter(Boolean));
+// Labels per item: { case: { unit id: { flag } } }; only decision-only rows carry the item outcomes they are read against.
+const expect = values.expect ? (JSON.parse(readFileSync(values.expect, 'utf8')) as Expect) : undefined;
+if (expect && !values.table && !values['decision-only']) throw new Error('--expect needs --decision-only or --table');
 
 // --budget: each arm's checks by escalation rate after the table; a check over budget fails the command.
 function printBudget(rows: Row[]): number {
@@ -21,7 +24,7 @@ function printBudget(rows: Row[]): number {
 // A rows file, from a finished run or one that was stopped, prints as the table it would have printed; the seed is not in it.
 if (values.table) {
   const rows = readFileSync(values.table, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Row);
-  console.log(table({ rows, declined: [] }, [...new Set(rows.map((r) => r.arm))], reportChecks));
+  console.log(table({ rows, declined: [] }, [...new Set(rows.map((r) => r.arm))], reportChecks, expect));
   process.exitCode = printBudget(rows);
 } else {
   await run();
@@ -56,7 +59,7 @@ async function run() {
   console.error(`arm order seed ${seed}`);
   const file = values.rows;
   const onRows = file ? (rows: Row[]) => appendFileSync(file, rows.map((r) => `${JSON.stringify(r)}\n`).join('')) : undefined;
-  const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), seed, onRows });
-  console.log(table(result, arms.map((a) => a.label), reportChecks));
+  const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), seed, onRows, decisionOnly: values['decision-only'] });
+  console.log(table(result, arms.map((a) => a.label), reportChecks, expect));
   process.exitCode = printBudget(result.rows);
 }

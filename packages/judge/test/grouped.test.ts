@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { SetTimer } from '@earendil-works/pi-durable';
 import { gateGenerations } from '@quack/sdk';
 import { PASS_ONLY, type AggregateDecl, type CheckDecl, type Declaration } from '../src/declaration.ts';
-import { check, feedback, judged, registerSelector, registerSplitter, rejudge, type JudgeOptions, type Rubric } from '../src/index.ts';
+import { check, feedback, judged, registerSelector, registerSplitter, rejudge, type JudgeOptions, type Progress, type Rubric } from '../src/index.ts';
 import { sessionApi } from './fake-session.ts';
 
 // Each pair is [item, group, evidence?]: the item's piece is its group's claim, the evidence goes on its shared context.
@@ -194,4 +195,69 @@ test('a round whose items all escalate puts one judge-model call in flight on th
   await round(api, optsOf(declOf(grouped('any', 'share')), [['a1', 'A'], ['b1', 'B'], ['c1', 'C'], ['d1', 'D']]));
   off();
   assert.deepEqual([seen.judge.length, flight.max], [4, 1]);
+});
+
+// A round through check() whose judge-model call waits on `gate`, with progress written by `details` on a clock the test moves.
+function liveRound(details: (p: Progress) => Promise<void>, setTimer: SetTimer) {
+  const { api } = sessionApi(clef, () => said('no'));
+  const fake = api as unknown as { models: { completeSimple: (...a: unknown[]) => Promise<unknown> } } & Record<string, unknown>;
+  const [entered, gate] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+  const judge = fake.models.completeSimple;
+  fake.models.completeSimple = async (...a) => (entered.resolve(), await gate.promise, judge(...a));
+  const sealed = { kind: 'k', version: 1, hash: '', content: 'x', sealedAt: 0, verdict: null };
+  const doc = { kinds: { k: { versions: [sealed] } } };
+  const clock = { t: 0 };
+  Object.assign(fake, { now: () => clock.t, taskId: 1, details, snapshot: async () => doc, commit: async (change: (tx: unknown) => Promise<unknown>) => change({ doc: async () => doc }) });
+  const opts = { ...optsOf(declOf(grouped('any', 'share')), [['a1t', 'A'], ['b1t', 'B'], ['c1', 'C'], ['d1', 'D']]), reuse: false };
+  return { done: check(api, opts, sealed as never, 'submit', BACKGROUND_CONTEXT, setTimer), entered: entered.promise, gate, clock };
+}
+const counts = ({ checks: [c] }: Progress) => ({ units: c.units, settled: c.settled, escalating: c.escalating, waiting: c.waiting });
+const passedHalf = (outcome: Awaited<ReturnType<typeof check>>) => 'verdict' in outcome && outcome.verdict.checks[0].met === 0.5;
+
+test("progress counts each check's items as Clef settles them, the judge model takes them and they wait, sending at most once a second", async () => {
+  const sent: Progress[] = [];
+  const timers: Array<{ fire: () => void; ms: number; off?: boolean }> = [];
+  const setTimer: SetTimer = (fire, ms) => {
+    const t = { fire, ms };
+    timers.push(t);
+    return () => void Object.assign(t, { off: true });
+  };
+  const { done, entered, gate, clock } = liveRound(async (p) => void sent.push(structuredClone(p)), setTimer);
+  await entered;
+  const none = { units: undefined, settled: undefined, escalating: undefined, waiting: undefined };
+  assert.deepEqual(sent.map(counts), [none, { units: 4, settled: {}, escalating: 0, waiting: 4 }], 'one send as the round starts; the answers since wait for the throttle');
+  assert.deepEqual(timers.map((t) => t.ms), [1000]);
+  clock.t = 1000;
+  timers[0].fire();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(counts(sent[2]), { units: 4, settled: { clef: 2 }, escalating: 1, waiting: 1 }, 'Clef settled two; one is with the judge model, one waits for its slot');
+  gate.resolve();
+  assert.ok(passedHalf(await done));
+  assert.equal(sent.length, 3, 'nothing is sent after the round');
+  assert.ok(timers.length > 1 && timers.slice(1).every((t) => t.off), 'a trailing send armed late is cancelled');
+});
+
+test('a progress write that fails, the first one included, leaves the round to finish with its verdict', async () => {
+  let tries = 0;
+  const fail = async () => {
+    tries++;
+    throw new Error('storage hiccup');
+  };
+  const { done, gate } = liveRound(fail, () => () => undefined);
+  gate.resolve();
+  assert.ok(passedHalf(await done));
+  assert.ok(tries >= 2, 'the first write and a counted one were both tried');
+});
+
+test('a host that declines the background timer does not freeze progress: the next poke past the second sends', async () => {
+  const sent: Progress[] = [];
+  let asked = 0;
+  const { done, entered, gate, clock } = liveRound(async (p) => void sent.push(structuredClone(p)), () => void asked++);
+  await entered;
+  assert.equal(sent.length, 2);
+  clock.t = 1000;
+  gate.resolve();
+  assert.ok(passedHalf(await done));
+  assert.ok(asked > 1, 'each poke inside the second asked for a timer again');
+  assert.deepEqual(counts(sent[2]).settled, { clef: 2 }, 'the first poke after the second sent the counts');
 });

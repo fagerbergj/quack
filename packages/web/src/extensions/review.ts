@@ -7,7 +7,7 @@ export type Item = Finding & { title: string; more: string };
 export type Review = Reading & { takeaway: string; items: Item[]; verified: string[]; notes: string[] };
 
 const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
-const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
+const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|\.[\w@+-][\w.@+-]*|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 const FENCE = /^(```|~~~)/;
 const BULLET = /^(- |[*+] |\d+\. )/;
 
