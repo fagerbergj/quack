@@ -1,5 +1,5 @@
 import { checkFailed, type Check, type Verdict } from './api.ts';
-import { CheckRow, Pill } from './CheckList.tsx';
+import { CheckRow, type About } from './CheckList.tsx';
 
 export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
 
@@ -10,17 +10,14 @@ function headline(v: Verdict, failed: number): string {
   return v.limitReached ? `Double-check failed at the revision limit · ${fix}` : `Double-check failed · ${fix}`;
 }
 
-// Checks are named by the problem they look for, so a passed one only needs a pill when it says more than "not found".
-const telling = (c: Check) => c.met === null || (Number(c.met) > 0 && Number(c.met) < 1);
-
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
-export function CheckResult({ verdict, open, summary }: { verdict: Verdict; open: boolean; summary?: string }) {
+export function CheckResult({ verdict, open, summary, about }: { verdict: Verdict; open: boolean; summary?: string; about?: About }) {
   const failed = verdict.checks.filter(checkFailed);
   const rest = verdict.checks.filter((c) => !checkFailed(c));
-  const group = (title: string, checks: Check[], all: boolean) => checks.length > 0 && (
+  const group = (title: string, checks: Check[]) => checks.length > 0 && (
     <div className="flex flex-col">
       <h3 className="m-0 pt-1 text-[11.5px] font-semibold tracking-wide text-muted uppercase">{title}</h3>
-      {checks.map((c) => <CheckRow key={`${c.criterion}.${c.id}`} check={c} pill={all || telling(c)} />)}
+      {checks.map((c) => <CheckRow key={`${c.criterion}.${c.id}`} check={c} mark about={about} />)}
     </div>
   );
   return (
@@ -30,8 +27,8 @@ export function CheckResult({ verdict, open, summary }: { verdict: Verdict; open
         <span>{summary ?? headline(verdict, failed.length)}</span>
       </summary>
       <div className="ml-[18px] flex flex-col gap-2 text-ink">
-        {group(verdict.limitReached ? 'Released with these unfixed' : 'The revision must fix', failed, true)}
-        {group('Checked, nothing found', rest, false)}
+        {group(verdict.limitReached ? 'Released with these unfixed' : 'The revision must fix', failed)}
+        {group('Checked, nothing found', rest)}
       </div>
     </details>
   );
