@@ -15,7 +15,7 @@ import { Artifacts } from '@quack/sdk';
 import { claimOf } from '@quack/sdk/report';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession, replayJudge } from '@quack/eval';
-import { buildEvidence, decisionModelTokens, manifest as judgeManifest, rejudge, type Inputs, type JudgeConfig, type Verdict } from '@quack/judge';
+import { buildEvidence, decisionModelTokens, manifest as judgeManifest, rejudge, type Inputs, type JudgeConfig, type Question, type Verdict } from '@quack/judge';
 import { fakeClef } from '../../contracts/test/clef.ts';
 import { citedIds, findingItems, formatResults, htmlToText, inputsOf, isPublicAddress, manifest, reportDeclaration, reportInputs, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 import { excerpt, missingQuotes, quotedSpans } from '../src/report.ts';
@@ -438,7 +438,7 @@ test('each sentence of a finding is a claim, asked of each kept source it cites 
   assert.deepEqual(ev.source[0].shared, { finding: '- Kestrel operates 38 electric buses. All are the Vantor E12. [s1][s2]' }, 'a finding of several sentences is shared, so its items pack');
   assert.equal(ev.source[4].shared, undefined, 'a one-sentence finding goes alone');
   assert.deepEqual(Object.keys(ev), ['sources', 'source']);
-  assert.deepEqual([researchRubric.version, researchRubric.threshold], [11, 0.8]);
+  assert.deepEqual([researchRubric.version, researchRubric.threshold], [13, 0.8]);
   assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1]]);
   assert.equal(reportDeclaration.checks.supported_by_source.decisionModel, undefined, 'the decision model settles each item first');
 });
@@ -463,6 +463,27 @@ test('a claim holds once one cited source states it; one no source states fails,
   assert.equal(clef.requests.length, 1, 'the finding\'s four items packed into one request');
 });
 
+test('reasoning that follows from the finding\'s sourced facts passes; an unsourced figure worded as an inference and a contradicted figure still fail', async (t) => {
+  const report = '## Summary\nx\n## Assumptions\nNone.\n## Findings\n- The Vantor E12 is rated at 190 km per charge [s1]. The Corva C9 is rated at 140 km [s2]. So the Vantor E12 is the better fit for long routes.\n- Therefore the harbour has 38 buses. [s1]\n- The Vantor E12 is rated at 240 km. [s1]\n';
+  const models = createModels();
+  models.setProvider(fauxProvider({ provider: 'judge', models: [{ id: 'j' }] }).provider);
+  const answers: Record<string, string> = { 'finding-1.1 ~ s1': 'states', 'finding-1.2 ~ s2': 'states', 'finding-1.3 ~': 'reasoning', 'finding-3.1 ~ s1': 'contradicts' };
+  const clef = await fakeClef(t, (q) => Object.entries(answers).find(([id]) => q.includes(id))?.[1] ?? 'silent');
+  models.setProvider(clef.provider);
+  let verdict: Verdict | undefined;
+  await replayJudge({
+    cases: [{ case: 'fit', kind: 'research.report', content: report, inputs: inputsOf(report, new Map([['s1', 'Vantor E12: rated at 190 km per charge.'], ['s2', 'Corva C9: rated at 140 km per charge.']])) }],
+    arms: [{ label: 'clef', adapters: manifest.evalAdapters!, rejudge: async (...a) => (verdict = await rejudge(...a)), decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
+    repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
+  });
+  const check = verdict!.checks.find((k) => k.id === 'supported_by_source')!;
+  assert.deepEqual([check.met, check.marks, check.resolvers], [3 / 5, ['finding-2.1', 'finding-3.1'], { clef: 6 }], 'Clef settled every item; only the bus count and the contradicted range fail');
+  const reasoning = (reportDeclaration.checks.supported_by_source.question as Extract<Question, { type: 'choice' }>).options.reasoning;
+  assert.match(reasoning, /number, date, name or quote/, 'a figure the finding does not already give is never reasoning, however it is worded');
+  const asked = clef.requests.find((r) => Object.values(r.questions).some((q) => q.includes('finding-1.3 ~')))!;
+  assert.match(JSON.stringify(asked.state), /rated at 190 km per charge.*rated at 140 km/, 'the inference is asked beside the facts it draws on');
+});
+
 test('the web reads every judged item\'s claim back from the report by its name, a cited paragraph above a list included', () => {
   const above = '## Findings\nLater paragraph [s21].\n- Covered by the paragraph above.\n\nA-MAC scores: [s16]\n- Utility: rated.\n- **Lead:**\n  - Nested one [s3]. Two.\n';
   const reports = [above, ...readdirSync(new URL('./fixtures/reports/', import.meta.url)).map((n) => readFileSync(new URL(`./fixtures/reports/${n}`, import.meta.url), 'utf8'))];
@@ -477,15 +498,18 @@ test('the web reads every judged item\'s claim back from the report by its name,
   assert.equal(claimOf(above, 1, 2), 'Covered by the paragraph above.');
 });
 
-test('every item of the fixture reports fits Clef\'s window, even when each cited page is long and on topic', () => {
+test('every item of the fixture reports fits Clef\'s window with its finding shared, even when each cited page is long and on topic', () => {
   const asks = Object.entries(reportDeclaration.checks).map(([id, d]) => ({ id: `claims_grounded.${id}`, question: d.question }));
+  const shared: Record<string, number> = {};
   for (const name of readdirSync(new URL('./fixtures/reports/', import.meta.url))) {
     const md = readFileSync(new URL(`./fixtures/reports/${name}`, import.meta.url), 'utf8');
     const page = md.repeat(Math.ceil(200_000 / md.length));
     const units = buildEvidence(reportDeclaration, inputsOf(md, new Map(citedIds(md).map((id) => [id, page])))).evidence.source;
+    shared[name] = units.filter((u) => u.shared?.finding).length;
     const over = units.filter((u) => decisionModelTokens(u, asks) >= 8192).map((u) => u.id);
     assert.deepEqual(over, [], name);
   }
+  assert.ok(Object.values(shared).some((n) => n > 0), `no fixture has a finding of several sentences: ${JSON.stringify(shared)}`);
 });
 
 const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';

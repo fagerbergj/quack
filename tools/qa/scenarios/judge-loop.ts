@@ -65,7 +65,7 @@ const scenario: Scenario = {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-revise', 'qa-judge-2', 'revise');
       expect(JSON.stringify(versions.map((v) => v.verdict?.passed)) === '[false,true]', 'verdicts', versions);
       const check = versions[0].verdict?.checks?.find((c) => c.id === 'supported_by_source');
-      expect(check?.met === 0 && check.label === "A claim isn't stated by any source it cites", 'supported_by_source judged the claim (a dropped claim unit would pass the draft)', versions[0]);
+      expect(check?.met === 0 && check.label === "A claim is a fact no cited source states, or a conclusion that doesn't follow from the facts in its own bullet", 'supported_by_source judged the claim (a dropped claim unit would pass the draft)', versions[0]);
       expect(/missed claims_grounded\.supported_by_source/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
       expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Version 2 is final for this run; finish without revising it\./.test(results), 'the pass note', results);
     });
