@@ -219,10 +219,9 @@ export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 export type Need = (unit: Unit, check: Ask) => boolean;
 
 // Mirrors the cause names `--decision-only` reads off the memos; a null from the decision model is over the cap, or a refusal.
-function causeOf(s: Settings, items: Item[], probabilities: Record<string, number> | null | undefined, p: number | undefined, check: Ask, act: number): Cause {
+function causeOf(over: boolean, probabilities: Record<string, number> | null | undefined, p: number | undefined, check: Ask, act: number): Cause {
   if (check.decisionModel === false) return 'declared';
-  if (probabilities === undefined) return 'outage';
-  if (p === undefined) return probabilities === null && s.ref && tokensOf(items) <= s.ref.maxInputTokens ? 'refused' : 'over-window';
+  if (p === undefined) return probabilities === null && !over ? 'refused' : 'over-window';
   return check.decisionModel === PASS_ONLY && 1 - p >= act ? 'pass-only-no' : 'unsure';
 }
 
@@ -290,7 +289,9 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   }
   s.hold?.heard(asked);
   const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check));
-  for (const a of unsure) causes.set(a, causeOf(s, items, probabilities, a.p, a.check, act));
+  // Without a decision model nothing left one, so no cause is recorded.
+  const over = probabilities === null && !!s.ref && tokensOf(items) > s.ref.maxInputTokens;
+  if (s.ref) for (const a of unsure) causes.set(a, causeOf(over, probabilities, a.p, a.check, act));
   // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
   const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await asking(s, [a], () => escalate(api, s, a.unit, a.check, ctx)) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.

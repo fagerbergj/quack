@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import type { Verdict } from '@quack/judge';
 import { budget, escalated } from './judge-replay.ts';
 
-const CAUSELESS = ['outage'];
+const UNRATED: string[] = ['outage'];
 
 const USAGE = 'usage: escalation-report.ts <exports-dir> [--decision-model <modelId>] [--since <epoch ms>]';
 
@@ -20,7 +20,7 @@ export function countsOf(exports: Exported[], decisionModel: string, since = 0) 
     const clef = c.resolvers[decisionModel] ?? 0;
     if (!c.escalated) return { key, clef, esc: escalated(c.resolvers, decisionModel) };
     // An outage leaves its item undecided, so it is shown but not rated as an escalation.
-    const causes = Object.entries(c.escalated).filter(([k]) => !CAUSELESS.includes(k)).map(([, n]) => n);
+    const causes = Object.entries(c.escalated).filter(([k]) => !UNRATED.includes(k)).map(([, n]) => n);
     const declared = Object.keys(c.escalated).every((k) => k === 'declared');
     return { key, clef, esc: causes.reduce((a, b) => a + b, 0), causes: c.escalated, ...(declared && { route: 'declared' as const }) };
   }));

@@ -49,7 +49,7 @@ export type CheckResult = {
   units: number;
   /** This round's settlements by resolver: `code`, or the modelId of the model that answered (the decision model, or the judge model an escalation reached); with `reused` they cover the settled items. */
   resolvers: Record<string, number>;
-  /** This round's items that left the decision model, by cause; absent when none, and on verdicts from before it was recorded. */
+  /** Items escalated from the decision model this round, plus those an outage left undecided, by cause; absent when none, and on verdicts from before it was recorded. */
   escalated?: Partial<Record<Cause, number>>;
   /** Items whose answer was reused from an earlier round in this session, by item id to the version first judged on; absent when none. */
   reused?: Record<string, number>;

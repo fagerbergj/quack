@@ -527,3 +527,10 @@ test('each item that leaves the decision model carries its cause, and one Clef s
   assert.equal(await causeOf(callApi(async () => ({ stopReason: 'error', answers: {}, errorMessage: '400 Bad Request' })), ref), 'refused');
   assert.equal(await causeOf(callApi(() => Promise.reject(new Error('503 busy'))), ref), 'outage');
 });
+
+test('with no decision model an escalated item records no cause', async () => {
+  const api = callApi(async () => confident);
+  const [a] = await answerItems(api as never, { memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks }], BACKGROUND_CONTEXT);
+  assert.equal(a.answer!.cause, undefined);
+  assert.equal(a.answer!.resolver, 'agent-model');
+});

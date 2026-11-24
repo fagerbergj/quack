@@ -376,7 +376,7 @@ const splitOf = (c: Count['causes']) => (c && Object.keys(c).length ? ` [${CAUSE
 // Without a route or causes (an old export or rows file) a key the decision model settled nothing for may be either, so it is listed apart as no-clef.
 function markOf(r: Count & { rate: number }) {
   if (r.route === 'declared' || r.route === 'not-asked') return r.route.padEnd(9);
-  if (!r.route && !r.clef) return 'no-clef  ';
+  if (!r.route && !r.clef && !r.causes) return 'no-clef  ';
   return r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       ';
 }
 
