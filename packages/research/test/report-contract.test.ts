@@ -75,7 +75,7 @@ test('a stored report the seal now refuses still reads: its Summary line and no 
   assert.deepEqual(findingItems(md), []);
   assert.deepEqual(citedIds(md), ['s1', 's3', 's2']);
   assert.equal(accepts(parseReport(md)), false, 'its parse lacks the findings section, as the seal says');
-  assert.deepEqual((await buildEvidence(reportDeclaration, inputsOf(md, new Map([['s1', 'x']])))).evidence.claim, []);
+  assert.deepEqual((await buildEvidence(reportDeclaration, inputsOf(md, new Map([['s1', 'x']])))).evidence.source, []);
 });
 
 const F = (body: string) => `## Findings\n${body}`;

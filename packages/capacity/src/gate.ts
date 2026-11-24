@@ -2,7 +2,8 @@ import type { ModelWait } from '@quack/sdk';
 import type { Lease } from './ledger.ts';
 
 export type LeaseClient = {
-  acquire(endpoint: string, holder: string): Promise<Lease>;
+  /** With `ahead`, the place last seen, the service holds the request until that place changes or its hold time passes. */
+  acquire(endpoint: string, holder: string, opts?: { ahead?: number; signal?: AbortSignal }): Promise<Lease>;
   /** The extended lease, or undefined when it is lost (lapsed or released). */
   heartbeat(endpoint: string, holder: string): Promise<Lease | undefined>;
   release(endpoint: string, holder: string): Promise<void>;
@@ -12,7 +13,6 @@ export type LeaseClient = {
 export type Clock = {
   now(): number;
   setTimer(fn: () => void, ms: number): () => void;
-  sleep(ms: number, signal?: AbortSignal): Promise<void>;
 };
 
 export const realClock: Clock = {
@@ -22,11 +22,6 @@ export const realClock: Clock = {
     t.unref();
     return () => clearTimeout(t);
   },
-  sleep: (ms, signal) => new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => (clearTimeout(t), reject(signal.reason)), { once: true });
-  }),
 };
 
 export type GateOptions = {
@@ -34,7 +29,6 @@ export type GateOptions = {
   /** One session process is one holder, so a restarted process takes its old place back instead of double-holding. Parallel calls add `#n` to it. */
   holder: string;
   clock?: Clock;
-  pollMs?: number;
   /** After the service fails, generations skip it this long. */
   downMs?: number;
   log?: (line: string) => void;
@@ -44,10 +38,18 @@ export type GateOptions = {
 
 /** `busy` or `rides` (0 or 1) is the one call in flight on the lease, which is then neither reused nor released by `end`; `riders` are the shared calls queued for their turn.
  * A `lent` lease is one a shared call was granted during a wait: it goes back once free, instead of staying as the run's kept lease. */
-type Held = { idx: number; endpoint: string; busy: boolean; rides: number; riders: Array<() => void>; granted?: true; lent?: true; stopBeat: () => void };
+type Held = {
+  idx: number; endpoint: string; busy: boolean; rides: number; riders: Array<() => void>; granted?: true; lent?: true; stopBeat: () => void;
+  // While queued at the service: `take` hands it a lease of the run's that came free, `cut` ends its held request.
+  take?: (spare: Held) => boolean; cut?: () => void;
+};
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held; ride?: true };
 const free = (l: Held) => !l.busy && !l.rides;
+// A floor on the heartbeat cadence, whatever expireTime the service grants.
+const MIN_BEAT_MS = 1000;
+// Above the service's hold time, so a held acquire is answered before the client gives up on it.
+const HELD_TIMEOUT_MS = 60_000;
 
 /** A run's leases on model endpoints: one per model call in flight, and one per endpoint kept between generations until the run ends or waits. */
 export class CapacityGate {
@@ -65,7 +67,7 @@ export class CapacityGate {
   #queued = new Map<object, ModelWait>();
 
   constructor(options: GateOptions) {
-    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setWait: () => {}, ...options, clock: options.clock ?? realClock };
+    this.#o = { downMs: 30_000, log: console.error, setWait: () => {}, ...options, clock: options.clock ?? realClock };
   }
 
   // The first lease keeps the session's holder name, so a restarted process takes its old place back.
@@ -93,11 +95,17 @@ export class CapacityGate {
     const lease = done.lease;
     if (done.ride) lease.rides = 0;
     else lease.busy = false;
+    this.#freed(lease);
+  }
+
+  #freed(lease: Held) {
     this.#nextRide(lease);
     // The run keeps its lowest-numbered free lease per endpoint that it is not lending; a parallel call's extra one goes back with the call.
     const idleOn = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint);
     const keep = idleOn.filter((l) => !l.lent).sort((a, b) => a.idx - b.idx)[0];
     for (const l of idleOn) if (l !== keep) void this.#drop(l);
+    // A call of this run queued at the service takes the kept lease over its place; the first one that accepts it gets it.
+    if (keep) this.#leases.some((l) => l.endpoint === keep.endpoint && l.take?.(keep));
   }
 
   /** The run opened or closed a wait (a person, a child run). Waits count per process, so a child run's calls see its parent's;
@@ -191,6 +199,7 @@ export class CapacityGate {
   // Riders still queued on a lease that goes away run ungated, as a call does when the service is down.
   #remove(lease: Held) {
     lease.stopBeat();
+    lease.cut?.();
     this.#leases = this.#leases.filter((l) => l !== lease);
     for (const go of lease.riders.splice(0)) go();
   }
@@ -215,7 +224,7 @@ export class CapacityGate {
   // The cadence follows the expireTime the service granted; an ungated lease has none and never lapses.
   #beat(lease: Held, granted: Lease) {
     if (!granted.expireTime) return;
-    const ms = Math.max(this.#o.pollMs, (Date.parse(granted.expireTime) - this.#o.clock.now()) / 3);
+    const ms = Math.max(MIN_BEAT_MS, (Date.parse(granted.expireTime) - this.#o.clock.now()) / 3);
     lease.stopBeat = this.#o.clock.setTimer(async () => {
       // A failed beat reads as alive: the service being down must not cost the lease.
       const next = await this.#o.client.heartbeat(lease.endpoint, this.#holder(lease)).catch(() => granted);
@@ -245,50 +254,78 @@ export class CapacityGate {
     this.#o.setWait(all.length ? { ...first } : null);
   }
 
+  // Each acquire after the first is held by the service until the place it reports changes, so nothing here polls.
   async #poll(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
-    for (;;) {
-      signal?.throwIfAborted();
-      await this.#releasing;
-      let r: Lease;
-      try {
-        r = await this.#o.client.acquire(lease.endpoint, this.#holder(lease));
-      } catch (err) {
-        this.#downUntil = this.#o.clock.now() + this.#o.downMs;
-        if (!this.#warned) this.#o.log(`capacity: service unreachable, generations run ungated: ${(err as Error).message}`);
-        this.#warned = true;
-        return undefined;
+    const cut = new AbortController();
+    lease.cut = () => cut.abort();
+    const stop = signal ? AbortSignal.any([signal, cut.signal]) : cut.signal;
+    // Accepted once, marked busy as it is taken; a call aborted or cut refuses it, so the lease stays the run's.
+    let got: Held | undefined;
+    const spare = new Promise<undefined>((resolve) => (lease.take = (s) => {
+      if (stop.aborted) return false;
+      got = Object.assign(s, { busy: true });
+      lease.take = undefined;
+      resolve(undefined);
+      return true;
+    }));
+    try {
+      let ahead: number | undefined;
+      for (;;) {
+        signal?.throwIfAborted();
+        await this.#releasing;
+        const asked = this.#o.client.acquire(lease.endpoint, this.#holder(lease), { ahead, signal: stop });
+        asked.catch(() => {});
+        const r = await Promise.race([asked, spare]).catch((err: unknown) => this.#failed(err, signal, cut.signal));
+        if (got) {
+          const taken = got;
+          got = undefined;
+          // Its own place goes back only once the request settles, so the release cannot land before the acquire.
+          cut.abort();
+          await asked.catch(() => {});
+          await this.#drop(lease);
+          return taken;
+        }
+        if (r === undefined || r === 'cut') return undefined;
+        if (!this.#leases.includes(lease)) return void (await this.#orphaned(lease));
+        if (r.state === 'granted') {
+          lease.granted = true;
+          this.#beat(lease, r);
+          return lease;
+        }
+        ahead = r.ahead;
+        this.#queue(lease, ahead);
       }
-      if (await this.#orphaned(lease)) return undefined;
-      if (r.state === 'granted') {
-        lease.granted = true;
-        this.#beat(lease, r);
-        return lease;
-      }
-      this.#queue(lease, r.ahead);
-      await this.#o.clock.sleep(this.#o.pollMs, signal);
-      // A call of this session that ended frees its own idle lease; take that over the queue.
-      const spare = this.#leases.find((l) => l !== lease && free(l) && l.endpoint === lease.endpoint);
-      if (spare) {
-        spare.busy = true;
-        await this.#drop(lease);
-        return spare;
-      }
+    } finally {
+      lease.take = lease.cut = undefined;
+      // A handover accepted while this call unwound from an abort goes back to the run, free.
+      if (got) this.#freed(Object.assign(got, { busy: false }));
     }
+  }
+
+  // An abort of the call rethrows; this gate cutting the request short is `cut`; anything else is the service down, and undefined.
+  #failed(err: unknown, signal: AbortSignal | undefined, cut: AbortSignal): 'cut' | undefined {
+    if (signal?.aborted) throw signal.reason;
+    if (cut.aborted) return 'cut';
+    this.#downUntil = this.#o.clock.now() + this.#o.downMs;
+    if (!this.#warned) this.#o.log(`capacity: service unreachable, generations run ungated: ${(err as Error).message}`);
+    this.#warned = true;
+    return undefined;
   }
 }
 
 /** The service over HTTP; a network error or an unexpected status throws, which the gate treats as the service being down. */
 export function httpClient(url: string, token: string, doFetch: typeof fetch = fetch): LeaseClient {
-  const call = async (method: string, endpoint: string, holder: string, verb = '') => {
-    const at = `${url}/endpoints/${encodeURIComponent(endpoint)}/leases/${encodeURIComponent(holder)}${verb}`;
-    const res = await doFetch(at, { method, headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
+  const call = async (method: string, endpoint: string, holder: string, verb = '', o: { ahead?: number; signal?: AbortSignal } = {}) => {
+    const at = `${url}/endpoints/${encodeURIComponent(endpoint)}/leases/${encodeURIComponent(holder)}${verb}${o.ahead === undefined ? '' : `?ahead=${o.ahead}`}`;
+    const timeout = AbortSignal.timeout(o.ahead === undefined ? 5000 : HELD_TIMEOUT_MS);
+    const res = await doFetch(at, { method, headers: { authorization: `Bearer ${token}` }, signal: o.signal ? AbortSignal.any([o.signal, timeout]) : timeout });
     // 404 and 409 on a heartbeat are the lease being lost, not the service.
     if (verb && (res.status === 404 || res.status === 409)) return undefined;
     if (!res.ok) throw new Error(`capacity service answered ${res.status}`);
     return res.status === 204 ? undefined : ((await res.json()) as Lease);
   };
   return {
-    acquire: async (e, h) => (await call('PUT', e, h))!,
+    acquire: async (e, h, o) => (await call('PUT', e, h, '', o))!,
     heartbeat: (e, h) => call('POST', e, h, ':heartbeat'),
     release: async (e, h) => void (await call('DELETE', e, h)),
   };

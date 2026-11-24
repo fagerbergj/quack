@@ -1,10 +1,10 @@
 import type { Context } from '@earendil-works/chord/context';
-import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, attachVerdict, inSessionSlot, type SealedArtifact } from '@quack/sdk';
-import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
+import { LiveDoc, type SetTimer, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { Artifacts, attachVerdict, inSessionSlot, sealedVersions, type SealedArtifact } from '@quack/sdk';
+import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type CheckDecl, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
-import { answerItems, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
+import { answerItems, pack, passing, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
 import { feedback, score, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
@@ -15,6 +15,9 @@ export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './res
 export { limiter } from './limit.ts';
 export { judged, type JudgeConfig, type Judged } from './extension.ts';
 export { manifest } from './manifest.ts';
+
+/** The options that pass a declared check's item, as the judge reads an answer to it. */
+export const passingOptions = (d: CheckDecl): string[] => passing({ id: '', question: d.question, pass: d.aggregate.pass });
 
 export type JudgeOptions = {
   /** The artifact kind judged, by name. */
@@ -135,16 +138,59 @@ function finalize(p: Plan): CheckResult {
   return r;
 }
 
+/** A model check's items while it runs: settled by resolver (with `reused`), with the judge model now, and not yet answered. */
+export type Counts = { units: number; settled: Record<string, number>; escalating: number; waiting: number };
+
 /** What the check has decided so far, published as the tool call's running details; `met` is absent until the check is judged. */
-export type Progress = { rubric: string; checks: Array<{ criterion: string; id: string; label: string; weight: number | 'gate'; met?: boolean | number | null }> };
+export type Progress = { rubric: string; checks: Array<{ criterion: string; id: string; label: string; weight: number | 'gate'; met?: boolean | number | null } & Partial<Counts>> };
 
-/** Hands progress to wherever it is shown. */
-export type Report = (p: Progress) => Promise<void>;
+/** Hands progress to wherever it is shown; `setTimer` arms its trailing publish. */
+export type Report = { send: (p: Progress) => Promise<void>; setTimer: SetTimer };
 
-export function progressOf(rubric: Rubric, done: CheckResult[]): Progress {
+export function progressOf(rubric: Rubric, done: CheckResult[], counts = new Map<string, Counts>()): Progress {
   const byKey = new Map(done.map((r) => [`${r.criterion}.${r.id}`, r]));
-  return { rubric: rubric.name, checks: rubric.criteria.flatMap((c) => c.checks.map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: byKey.get(`${c.id}.${k.id}`)?.met }))) };
+  return { rubric: rubric.name, checks: rubric.criteria.flatMap((c) => c.checks.map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: byKey.get(`${c.id}.${k.id}`)?.met, ...counts.get(`${c.id}.${k.id}`) }))) };
 }
+
+const countsOf = (p: Plan, escalating: number): Counts => {
+  const reused = Object.keys(p.result.reused ?? {}).length;
+  return { units: p.units.length, settled: { ...p.result.resolvers, ...(reused && { reused }) }, escalating, waiting: p.left - escalating };
+};
+
+/** Sends at most once per `ms`: at once when the last send is that old, else in one trailing send of the state by then. */
+function throttle(send: () => Promise<void>, now: () => number, setTimer: SetTimer, ms = 1000) {
+  let last = -Infinity;
+  let armed = false;
+  let cancel: (() => void) | undefined;
+  let flight = Promise.resolve();
+  const fire = () => {
+    armed = false;
+    last = now();
+    // Progress is only shown, so a failed send must not fail the round.
+    flight = flight.then(send).catch(() => undefined);
+  };
+  return {
+    poke() {
+      if (armed) return;
+      if (now() - last >= ms) return fire();
+      armed = true;
+      cancel = setTimer(fire, last + ms - now(), { background: true });
+      // A host may decline a background timer; the next poke tries again rather than freezing the counts.
+      if (!cancel) armed = false;
+    },
+    /** Nothing is sent once this resolves: the tool call's details close with the round. */
+    async stop() {
+      armed = true;
+      cancel?.();
+      await flight;
+    },
+  };
+}
+
+const wallTimer: SetTimer = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  return () => clearTimeout(t);
+};
 
 /** The model checks whose every item is answered and that decided; an undecided one stays out so it reads as still checking. */
 export const settled = (plans: Plan[]): CheckResult[] => plans.filter((p) => !p.left).map((p) => ({ ...finalize(p) })).filter((r) => !r.undecided);
@@ -214,8 +260,14 @@ function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => vo
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans = planChecks(opts.rubric, opts.declaration, built);
   const byKey = new Map(plans.map((p) => [p.key, p]));
-  const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
-  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(1), hold: holds(byKey) };
+  const inFlight = new Map<string, number>();
+  const counts = () => new Map(plans.map((p) => [p.key, countsOf(p, inFlight.get(p.key) ?? 0)]));
+  const live = report && throttle(() => report.send(progressOf(opts.rubric, [...code, ...settled(plans)], counts())), () => api.now(), report.setTimer);
+  const busy = (asked: Pending[], n: 1 | -1) => {
+    for (const a of asked) inFlight.set(a.check.id, (inFlight.get(a.check.id) ?? 0) + n);
+    live?.poke();
+  };
+  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(1), hold: holds(byKey), busy };
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
     p.left--;
@@ -225,15 +277,15 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: Bu
       p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
       await reuse?.keep(check, unit, answer);
     }
-    if (!p.left) await publish();
+    live?.poke();
   };
   // An unsure item escalates only while its check's fold (and its group's) can still go either way.
   const need = (u: Unit, check: Ask) => !decided(byKey.get(check.id)!) && !groupDecided(byKey.get(check.id)!, u);
   const items = reuse ? reuseItems(itemsOf(plans), byKey, reuse) : itemsOf(plans);
   settings.hold.expect(items);
-  await publish();
+  live?.poke();
   // The round's model calls ride the session's own capacity slot.
-  await inSessionSlot(() => Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need))));
+  await inSessionSlot(() => Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)))).finally(() => live?.stop());
   return plans.map(finalize);
 }
 
@@ -249,13 +301,14 @@ const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.s
 async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {
   const run = await runOf(api, ctx);
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-  const mine = (doc?.kinds[kind]?.versions ?? []).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
+  const mine = sealedVersions(doc, kind).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
   // A person's change request after a pass, in the same run, gets a fresh budget.
   return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
 }
 
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
-  await report?.(progressOf(opts.rubric, []));
+  // Progress is only shown, so a failed write leaves the row at "Checking" rather than failing the submit.
+  await report?.send(progressOf(opts.rubric, [])).catch(() => undefined);
   const built = await evidenceFor(api, opts, sealed, ctx);
   const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
   const code = codeResults(opts.rubric, sealed.content, built.evidence);
@@ -291,13 +344,13 @@ export function report(sealed: SealedArtifact, v: Verdict, toolName: string, del
 /** One judging round: a deny past the revision limit, an undecided message (nothing attached), or the verdict, attached. */
 export type Outcome = { deny: string } | { undecided: string } | { verdict: Verdict };
 
-/** Judges a sealed version once: a version that carries a verdict keeps it, from any run. */
-export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, toolName: string, ctx: Context): Promise<Outcome> {
+/** Judges a sealed version once: a version that carries a verdict keeps it, from any run. `setTimer` is the progress throttle's test seam. */
+export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, toolName: string, ctx: Context, setTimer = wallTimer): Promise<Outcome> {
   if (sealed.verdict) return { verdict: sealed.verdict as unknown as Verdict };
   // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
   if ((await judgedInRun(api, sealed.kind, ctx)) > opts.maxRevisions) return { deny: `${sealed.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.` };
   // A workflow step seals from code, whose task shows no running details.
-  const shown = typeof api.details === 'function' ? (p: Progress) => api.details(p, ctx) : undefined;
+  const shown = typeof api.details === 'function' ? { send: (p: Progress) => api.details(p, ctx), setTimer } : undefined;
   const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown);
   // A verdict missing checks would pass or fail on a model outage; another submit asks again what this round left undecided.
   if (verdict.undecided.length) return { undecided: undecidedMessage(verdict.undecided, toolName) };

@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from './App.tsx';
-import { FakeEventSource, FakeSocket, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
+import { FakeSocket, streamsOf, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
 
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
 
@@ -37,7 +37,7 @@ test('a review leads with its PR title; its PR badge (state and number), repo an
   expect(line1).toHaveTextContent(/^#2243 Every failing item is named in the verdict$/);
   expect(within(line1).getByText('#2243'), 'the badge shows the number; line 1 keeps it for screen readers').toHaveClass('sr-only');
   expect(line1).toHaveAttribute('title', 'Every failing item is named in the verdict');
-  FakeEventSource.all.at(-1)!.open();
+  streamsOf('apps/github/events').at(-1)!.open();
   expect(await within(line2).findByRole('link', { name: 'Pull request #2243, open, on GitHub' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/pull/2243');
   expect(line2).toHaveTextContent(/^Idle#2243fagerbergj\/quack\$0\.11$/);
 });

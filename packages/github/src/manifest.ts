@@ -13,6 +13,8 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   settings: settingsProblems,
   app: mountGithub,
+  // A run that ends retries its session's queued review, /fix or steer.
+  listen: ['run.ended'],
   // The pull requests the page's badges read and their live events, and the webhook GitHub signs (the app verifies the signature).
   pages: [{ method: 'GET', path: MIRROR_PATH }, { method: 'GET', path: '/events' }, { method: 'POST', path: '/webhook' }],
   evalAdapters: [evalAdapter],

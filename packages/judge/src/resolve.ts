@@ -29,7 +29,7 @@ const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
 export const PROMPT_VERSION = 2;
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
 const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
-const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
+export const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
 
 function asked(ask: Ask, instructions: string): ClassifierQuestion {
   return ask.question.type === 'choice' ? { type: 'choice', instructions, criteria: ask.question.options } : { type: 'bool', instructions, criteria: CRITERIA };
@@ -196,8 +196,18 @@ async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask
 
 /** Told when a request's decision-model answers are in, after its confident ones are counted; `ready` is what an unsure item waits on before it may escalate, or undefined when it need not wait. */
 export type Hold = { heard: (asked: Pending[]) => void; ready: (unit: Unit, check: Ask) => Promise<void> | undefined };
-/** `retry` is the model calls' retry test seam. */
-export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams; hold?: Hold };
+/** `retry` is the model calls' retry test seam; `busy` is told as items go to the judge model (+1) and come back (-1). */
+export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams; hold?: Hold; busy?: (asked: Pending[], n: 1 | -1) => void };
+
+// Marks items as with the judge model for as long as `ask` runs.
+async function asking<T>(s: Settings, asked: Pending[], ask: () => Promise<T>): Promise<T> {
+  s.busy?.(asked, 1);
+  try {
+    return await ask();
+  } finally {
+    s.busy?.(asked, -1);
+  }
+}
 /** `answer` is absent when the item was not escalated because its check had already decided. */
 export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
@@ -222,7 +232,8 @@ async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending
     const held = batch.map((p) => s.hold?.ready(p.unit, p.check)).filter((w) => w !== undefined);
     if (held.length) await Promise.all(held);
     const missed = await s.escalations(async () => {
-      const replies = await askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx);
+      const needed = batch.filter((p) => need(p.unit, p.check));
+      const replies = await asking(s, needed, () => askBatch(api, s, model, needed, ctx));
       for (const p of batch) {
         const r = replies.get(p);
         if (r) await done(p, { met: passing(p.check).includes(r.choice), resolver, note: r.reason });
@@ -260,7 +271,7 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   s.hold?.heard(asked);
   const unsure = asked.filter((x) => !sure(x.p, x.check));
   // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
-  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await escalate(api, s, a.unit, a.check, ctx) : undefined)) : done(a, undefined));
+  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await asking(s, [a], () => escalate(api, s, a.unit, a.check, ctx)) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.
   const alone = (a: Pending) => s.hold?.ready(a.unit, a.check)?.then(() => go(a)) ?? go(a);
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);

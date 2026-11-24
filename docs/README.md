@@ -71,6 +71,8 @@ A `:reuse` arm's batch, one session's drafts in version order against one store,
 
 A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
 
+`--decision-only` asks only the decision model and never the judge model, so use it to triage a pass-only rework: it counts what escalates and why, and the judge model's accuracy on escalated items is the same in both arms. Every arm needs a decision model and no `:reuse`. An escalated item is left unanswered and listed in its row's `items` by cause (`declared`, `unsure`, `pass-only-no`, `over-window`, or `outage` when Clef was asked and never answered), beside the items Clef passed (`pass`) or failed (`no`). Each arm's line gives the causes and the round verdicts as a range: `pass` if the round passes even with every escalated item failing, `fail` if it fails even with every one passing, and `open` otherwise. A round Clef did not answer measures nothing, so its rows are kept and the run stops with an error. `--expect labels.json`, on such a run or with `--table`, reads hand labels `{ case: { unit id: { flag } } }` (as in a `wrong-output/expected.json`) and gives each labelled item's outcome once per check that judged it and repeat, with totals per arm and check: a real failure (`flag: true`) is `caught` when it escalates or Clef's no stands, and `passed-by-clef` when Clef passes it; a false flag is `false-flag-cleared` when Clef passes it. Its judge seconds count Clef alone, and its `met` and verdicts are not a judge's, so final timing and verdict claims still need a full replay. It reads Clef's answers and the escalations off the judge's memo names, so a ref arm from before those names misreports its items or fails.
+
 A replay rebuilds a `contract.spec` version's evidence as the session stood at its seal: the versions, approvals and answers recorded by then, and each file of a git clone in the workspace as the commit the clone's reflog says HEAD held then, since a session goes on pulling after it seals a version.
 
 A file the commit lacks (such as `node_modules`), or one in a clone made after the seal, is read as it is on disk.
@@ -106,6 +108,18 @@ Pinned copies in the data dir are history: they are never checked against this a
 A session runs on the copy it was pinned to, except its `model` and its judge settings (`extensions.judge`), which it takes from its agent's current bundle each time its process starts, so a woken session runs on the current model and judges its next version with the current decision model, while its prompt stays pinned; a session whose agent no longer has a bundle does not start.
 
 The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
+
+## Sessions API change stream
+
+`GET /sessions:watch` is a `text/event-stream` that says which sessions changed, so a client re-reads them through the list API instead of polling. It reads as `GET /sessions` does: a person or the tailnet, or a session credential with the cross-session grant (otherwise 404).
+
+- `event: hello` comes first, with the server's build as `GET /version` answers it: `{"commit": "...", "builtAt": "..."}`.
+- `event: changed` carries `{"keys": [...]}`, the keys of the sessions written since the last one. Writes within 250 ms of the first go out as one event.
+- `: keepalive` comments go out every 15 s, so the proxies in front keep an idle stream open.
+
+A change is any write the catalog commits (a lifecycle batch, a rename, archive, answer, stop or delete) and any change to a running session's `waiting`, which the distributor's sweep reads from the session. The stream subscribes before it answers, so a client that reads the list once the stream opens misses nothing. A client re-reads on every reconnect, since events sent while it was away are not replayed.
+
+The feed lives in the distributor's process, which is the catalog's only writer; several distributors on one Postgres would need LISTEN/NOTIFY.
 
 ## Checking a rollout
 

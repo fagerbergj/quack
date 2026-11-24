@@ -5,6 +5,7 @@ import type { Catalog, ListRequest } from './core.ts';
 import { CursorError } from './keyset.ts';
 import type { ArtifactRow, AskRow, Principal, SessionRow } from './port.ts';
 import { QueryError } from './query.ts';
+import { watchStream, type SetTimer } from './watch.ts';
 
 /** Who the listener says is calling: a person or the tailnet through the proxy, or a session's own credential. */
 export type Caller = Principal | { kind: 'session'; key: string; crossSession: boolean };
@@ -18,6 +19,9 @@ export type SessionsApiDeps = {
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
   /** The session's wait for a model slot, when it is queued for one; shown on its row while it runs. */
   waiting?(key: string): { since: number; ahead: number; provider: string } | undefined;
+  /** The server's build, as GET /version answers it, which the change stream's hello carries. */
+  build?(): object;
+  setTimer?: SetTimer;
 };
 
 // Re-exported from the sdk, the one definition, so existing @quack/catalog imports keep working.
@@ -26,6 +30,8 @@ const ASK_ID = /^[A-Za-z0-9._:-]{1,100}$/;
 const TITLE_MAX = 120;
 const { send, json } = serviceHttp({ maxBody: 64 * 1024 });
 const iso = (ms: number) => new Date(ms).toISOString();
+const WATCH = '/sessions:watch';
+const STREAMED = Symbol('streamed');
 
 class Problem extends Error {
   status: number;
@@ -184,12 +190,17 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     return (c) => (shape === '' ? one(req, keyOf(key), c) : sub(req, url, keyOf(key), rest, c));
   }
 
-  return async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<boolean> => {
+  const watch = watchStream(catalog.subscribe, { hello: deps.build ?? (() => ({})), setTimer: deps.setTimer });
+  // The stream reads as the session list does, so a caller that may list sessions may watch them.
+  const watchRoute = (res: ServerResponse) => (caller: Caller) => (mayRead(caller), watch.open(res), STREAMED);
+
+  const handle = async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
-    const route = routeOf(req, url);
+    const route = req.method === 'GET' && url.pathname === WATCH ? watchRoute(res) : routeOf(req, url);
     if (!route) return false;
     try {
-      send(res, 200, await route(caller));
+      const out = await route(caller);
+      if (out !== STREAMED) send(res, 200, out);
     } catch (err) {
       if (err instanceof Problem) sendProblem(res, err.status, err.message);
       else if (err instanceof QueryError || err instanceof CursorError) sendProblem(res, 400, err.message);
@@ -197,6 +208,8 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     }
     return true;
   };
+  /** `stop` ends every change stream, so a draining server can close. */
+  return Object.assign(handle, { stop: watch.stop });
 }
 
 function paged<T>(field: string, page: { rows: T[]; cursor?: string }, wire: (row: T) => unknown) {

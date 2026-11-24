@@ -67,6 +67,18 @@ test('a running session whose process reports a wait for a model slot carries it
   assert.equal((await listed()).find((s) => s.key === 'idle')?.waiting, undefined);
 });
 
+test('the sweep announces a changed wait on the catalog feed, and an unchanged one not again', async () => {
+  const { sweep, state, catalog } = await start({ busy: 'busy', ping: { status: 'HealthyBusy', waiting: { since: 5, ahead: 2, provider: 'local' } } });
+  const heard: string[] = [];
+  catalog.subscribe((key) => heard.push(key));
+  await sweep();
+  await sweep();
+  assert.deepEqual(heard, ['busy'], 'a wait seen again unchanged is not news');
+  state.hung = true;
+  await sweep();
+  assert.deepEqual(heard, ['busy', 'busy'], 'its clearing is');
+});
+
 test('a failed ping clears the wait, and an exited process loses its entry even if the key runs again', async () => {
   const { listed, sweep, state } = await start({ busy: 'busy', ping: { status: 'HealthyBusy', waiting: { since: 5, ahead: 2, provider: 'local' } } });
   const waiting = async () => (await listed()).find((s) => s.key === 'busy')?.waiting;

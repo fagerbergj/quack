@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
+import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App, type AppContext } from '@quack/sdk';
 import { GithubError, NoInstallation, RateLimited, type GithubApp } from './app.ts';
 import { allReviews, reviewFeedback } from './feedback.ts';
 import { fixQueued, fixRefused, fixSteered, noticeFor, reviewQueued, reviewRefused, settled } from './notice.ts';
@@ -26,8 +26,11 @@ export type ServiceConfig = {
   statesFile?: string;
   /** Where reviews and `/fix`es waiting for a busy session persist; without it they wait in memory and a restart drops them. */
   waiting?: WaitingStore;
-  /** How often waiting work retries; default 15 s. */
+  /** How often waiting work retries when no run-end event came; default 5 min. */
   queuePollMs?: number;
+  queueTimers?: Parameters<typeof waitingQueue>[3];
+  /** The run events the app hears; a run that ends retries that session's waiting work at once. */
+  subscribe?: AppContext['subscribe'];
 };
 
 const BACKOFF_CAP_MS = 30_000;
@@ -234,7 +237,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const dropped = await dropReason(app, queued);
   if (dropped) return send(res, 200, { session: trigger.sessionKey, dropped });
   queued.meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
-  // The queue's sweep sends the steer: review pushes inside one poll interval coalesce into one for the newest head, and each /fix is said once.
+  // The queue's retry sends the steer: review pushes before a retry coalesce into one for the newest head, and each /fix is said once.
   if (queued.steer && (await steering(config, queued))) return (await queueSteer(app, queue, queued), send(res, 202, { session: trigger.sessionKey, queued: true }));
   const before = postedCount(state, queued);
   const upstream = await submit(config, queued);
@@ -493,8 +496,11 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
   const state: RunState = { posted: new Map(), watched: new Set() };
   const states = pullStates(config.statesFile);
   const events = pullEventStream(states.subscribe);
-  const queue = waitingQueue<Queued>(config.waiting ?? sqliteWaiting(':memory:'), (_key, q) => startQueued(app, config, state, q), config.queuePollMs);
-  const stop = () => { queue.stop(); events.stop(); };
+  const queue = waitingQueue<Queued>(config.waiting ?? sqliteWaiting(':memory:'), (_key, q) => startQueued(app, config, state, q), config.queuePollMs, config.queueTimers);
+  const unsubscribe = config.subscribe?.((session, event) => {
+    if (event.type === 'run.ended') void queue.retry(session).catch((err) => console.warn(`github: retry after ${session} ended failed: ${String(err)}`));
+  });
+  const stop = () => { unsubscribe?.(); queue.stop(); events.stop(); };
   return { resume: queue.resume, stop, sweep: queue.sweep, handle: async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;

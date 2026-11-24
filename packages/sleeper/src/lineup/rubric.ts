@@ -1,21 +1,20 @@
-import type { CodeResult, Declaration, Evidence, Inputs, Rubric, Scope } from '@quack/judge';
+import { factsOf, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric, type Scope } from '@quack/judge';
 import { defect, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { Facts, PlayerFact } from './facts.ts';
 import type { LineupCard, Row } from './card.ts';
 
 const parse = (artifact: string) => parseCard<LineupCard>(artifact);
-const factsOf = (ev: Evidence) => ev.facts[0].state.facts as unknown as Facts;
 const changed = (r: Row, f: Facts) => r.player.id !== f.current[r.slot];
 
 function everySlotDecided(artifact: string, ev: Evidence): CodeResult {
   const { starters } = parse(artifact);
-  const missing = factsOf(ev).slots.filter((s) => !starters.some((r) => r.slot === s && r.player?.id));
-  return share(factsOf(ev).slots.length - missing.length, factsOf(ev).slots.length, `no verdict for ${missing.join(', ')}`);
+  const missing = factsOf<Facts>(ev).slots.filter((s) => !starters.some((r) => r.slot === s && r.player?.id));
+  return share(factsOf<Facts>(ev).slots.length - missing.length, factsOf<Facts>(ev).slots.length, `no verdict for ${missing.join(', ')}`);
 }
 
 // An open slot's incumbent has not locked and a locked slot keeps its player by construction, so only the player brought in can be locked.
 function noLockedSwap(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
+  const f = factsOf<Facts>(ev);
   const rows = parse(artifact).starters.filter((r) => changed(r, f));
   const bad = rows.filter((r) => f.players[r.player.id]?.game?.locked);
   return share(rows.length - bad.length, rows.length, `${bad.map((r) => r.slot).join(', ')} swap a player whose game has locked`);

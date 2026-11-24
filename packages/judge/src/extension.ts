@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { artifactKind, Artifacts, gate, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { artifactKind, Artifacts, gate, latestSealed, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
 import { check, report, type JudgeOptions, type Verdict } from './index.ts';
 import type { DecisionModelRef, ModelRef } from './resolve.ts';
@@ -71,7 +71,7 @@ const yieldHook = () => {
         if (!declared?.tool) continue;
         const { path, tool } = declared;
         if (await how.refuse?.(api, ctx)) continue;
-        const last = doc?.kinds[kind]?.versions.at(-1);
+        const last = latestSealed(doc, kind);
         const v = last?.verdict as Verdict | null | undefined;
         if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
         const stale = await overtaken(api, declared, last, ctx);

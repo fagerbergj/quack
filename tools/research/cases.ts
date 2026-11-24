@@ -2,7 +2,8 @@
 // The entities are invented so the judge's own knowledge cannot settle a case; each source text is a short page.
 import { inputsOf } from '@quack/research';
 
-export type Target = 'supported_by_source' | 'contradicted_by_source';
+// A contradicted claim is one no source states, so supported_by_source catches both kinds of flaw.
+export type Target = 'supported_by_source';
 export type Labelled = { case: string; kind: 'research.report'; content: string; inputs: ReturnType<typeof inputsOf>; good: boolean; targets: Target[] };
 
 const REQUEST = {
@@ -47,9 +48,9 @@ const SPECS: Spec[] = [
   { name: 'unsupported-library', request: REQUEST.library, source: SOURCE.library, targets: ['supported_by_source'], content: GOOD.library.replace('The Elm Street lot is free for the first three hours, then $2 per hour, and the library validates tickets for borrowers.', 'Weekend story time for children runs on Saturdays at 11am.') },
   { name: 'unsupported-grant', request: REQUEST.grant, source: SOURCE.grant, targets: ['supported_by_source'], content: GOOD.grant.replace('Applications open 1 April 2026 and close 31 May 2026.', 'Applicants must hold organic certification.') },
 
-  { name: 'contradicted-harbour', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['contradicted_by_source'], content: GOOD.harbour.replaceAll('2 March 2026', '2 June 2026') },
-  { name: 'contradicted-buses', request: REQUEST.buses, source: SOURCE.buses, targets: ['contradicted_by_source'], content: GOOD.buses.replaceAll('190 km', '240 km') },
-  { name: 'contradicted-grant', request: REQUEST.grant, source: SOURCE.grant, targets: ['contradicted_by_source'], content: GOOD.grant.replaceAll('$15,000', '$25,000') },
+  { name: 'contradicted-harbour', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['supported_by_source'], content: GOOD.harbour.replaceAll('2 March 2026', '2 June 2026') },
+  { name: 'contradicted-buses', request: REQUEST.buses, source: SOURCE.buses, targets: ['supported_by_source'], content: GOOD.buses.replaceAll('190 km', '240 km') },
+  { name: 'contradicted-grant', request: REQUEST.grant, source: SOURCE.grant, targets: ['supported_by_source'], content: GOOD.grant.replaceAll('$15,000', '$25,000') },
 
   { name: 'wrong-year-harbour', request: REQUEST.harbour, source: SOURCE.harbour2025, targets: ['supported_by_source'], content: report("Port Alder's council approved $3.1 million for harbour repairs in January 2026, and work starts on 3 March 2026.", ['The council approved $3.1 million for repairs to the east breakwater on 14 January 2026.', 'The contractor, Tidewater Marine, mobilises on 3 March 2026 and expects to finish by September 2026.']) },
 
