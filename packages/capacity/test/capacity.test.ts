@@ -395,6 +395,37 @@ test('a handover that lands as the queued call unwinds from its abort leaves the
   assert.deepEqual([heldBy(), table.endpoints()[0].waiting], [['s'], []]);
 });
 
+test('a handover accepted before the queued call aborts goes back to the run when that call unwinds', async () => {
+  fresh(3);
+  let finishRelease!: () => void;
+  const deferred = new Promise<void>((r) => (finishRelease = r));
+  const base = direct(table);
+  // An acquire sent on an aborted signal rejects in the same tick, as fetch does, so the call unwinds with the handover in hand.
+  const client: LeaseClient = {
+    acquire: (e, h, o) => (o?.signal?.aborted ? Promise.reject(o.signal.reason) : base.acquire(e, h, o)),
+    heartbeat: base.heartbeat,
+    release: async (e, h) => { await deferred; await base.release(e, h); },
+  };
+  const g = gate('s', client);
+  const [a, b, c] = [await g.begin('swap'), await g.begin('swap'), await g.begin('swap')];
+  g.end(b);
+  g.end(c);
+  await g.begin('swap');
+  const stop = new AbortController();
+  // Waits behind c's pending release, so the handover lands before it sends its acquire.
+  const queued = g.begin('swap', stop.signal);
+  await clock.settle();
+  g.end(a);
+  stop.abort(new Error('stopped'));
+  finishRelease();
+  await assert.rejects(queued, /stopped/);
+  table.acquire('swap', 'o');
+  const next = begin(g);
+  await clock.settle();
+  assert.equal(next.granted, true, 'the run\'s next call reuses the lease, not one busy with no call');
+  assert.deepEqual([heldBy().sort(), table.endpoints()[0].waiting], [['o', 's', 's#1'], []]);
+});
+
 // Four shared calls begun at once, as a judge round's Clef and escalation calls can be.
 function ride(g: CapacityGate, signal?: AbortSignal) {
   const state: { granted: boolean; call?: GatedCall; error?: unknown } = { granted: false };
