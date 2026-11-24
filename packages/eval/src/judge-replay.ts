@@ -12,7 +12,7 @@ import { rejudge, type CheckDecl, type DecisionModelRef, type Declaration, type 
 import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { adaptersOf } from './adapters.ts';
-import { CAUSES, choiceOf, decisionOnly, outcomes, type Outcome } from './decision-only.ts';
+import { CAUSES, choiceOf, decisionOnly, outcomes, type Cause, type Outcome } from './decision-only.ts';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
@@ -360,10 +360,20 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
 /** The share of a check's asked items it may escalate before it reads as unhealthy. */
 const ESCALATION_BUDGET = 0.1;
 
-type Count = { key: string; clef: number; esc: number; route?: Route };
+type Count = { key: string; clef: number; esc: number; route?: Route; causes?: Partial<Record<Cause, number>> };
+
+/** A decision-only row's escalated items by cause; undefined for any other row. */
+export function causesOf(r: Row): Count['causes'] {
+  if (!r.items) return undefined;
+  const out: Count['causes'] = {};
+  for (const o of Object.values(r.items)) if ((CAUSES as string[]).includes(o)) out[o as Cause] = (out[o as Cause] ?? 0) + 1;
+  return out;
+}
+
+const splitOf = (c: Count['causes']) => (c && Object.keys(c).length ? ` [${CAUSES.filter((k) => c[k]).map((k) => `${k} ${c[k]}`).join(', ')}]` : '');
 
 // A key never asked of the decision model (declared off it, or an arm without one) cannot move by fixing the check, so it is listed apart and never fails.
-// Without a route (an export, an old rows file) a key the decision model settled nothing for may be either, so it is listed apart as no-clef.
+// Without a route or causes (an old export or rows file) a key the decision model settled nothing for may be either, so it is listed apart as no-clef.
 function markOf(r: Count & { rate: number }) {
   if (r.route === 'declared' || r.route === 'not-asked') return r.route.padEnd(9);
   if (!r.route && !r.clef) return 'no-clef  ';
@@ -375,10 +385,11 @@ export function budget(counts: Count[]): { lines: string[]; unhealthy: number } 
   const by = new Map<string, Count>();
   for (const c of counts) {
     const t = by.get(c.key) ?? { key: c.key, clef: 0, esc: 0 };
-    by.set(c.key, { key: c.key, clef: t.clef + c.clef, esc: t.esc + c.esc, route: t.route ?? c.route });
+    const causes = c.causes || t.causes ? Object.fromEntries(CAUSES.map((k) => [k, (t.causes?.[k] ?? 0) + (c.causes?.[k] ?? 0)]).filter(([, n]) => n)) : undefined;
+    by.set(c.key, { key: c.key, clef: t.clef + c.clef, esc: t.esc + c.esc, route: t.route ?? c.route, causes });
   }
   const rated = [...by.values()].filter((t) => t.clef + t.esc).map((t) => ({ ...t, rate: t.esc / (t.clef + t.esc) })).sort((a, b) => b.rate - a.rate || a.key.localeCompare(b.key));
-  const lines = rated.map((r) => `${markOf(r)} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}`);
+  const lines = rated.map((r) => `${markOf(r)} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}${splitOf(r.causes)}`);
   return { lines, unhealthy: lines.filter((l) => l.startsWith('UNHEALTHY')).length };
 }
 

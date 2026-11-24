@@ -289,6 +289,14 @@ test('an export report counts each verdict check by rubric, the decision model\'
   assert.deepEqual(countsOf(exports, 'clef', 2), [{ key: 'acme@2 c.why', clef: 3, esc: 1 }, { key: 'acme@2 c.how', clef: 0, esc: 2 }]);
 });
 
+test('an export report reads recorded causes: the rate is theirs, outages are shown but not rated, and no-clef stays for verdicts without them', () => {
+  const check = (id: string, resolvers: Record<string, number>, escalated?: Record<string, number>) => ({ criterion: 'c', id, label: id, weight: 1, met: true, units: 1, resolvers, notes: [], escalated });
+  const verdict = { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'acme@2', undecided: [], checks: [check('new', { clef: 3 }, { unsure: 1, 'over-window': 1, outage: 2 }), check('skip', {}, { declared: 2 }), check('old', { 'agent-model': 2 })] };
+  const counts = countsOf([{ artifacts: [{ sealedAt: 5, verdict }] }], 'clef');
+  assert.deepEqual(counts.map((c) => [c.key, c.clef, c.esc, 'route' in c ? c.route : undefined]), [['acme@2 c.new', 3, 2, undefined], ['acme@2 c.skip', 0, 2, 'declared'], ['acme@2 c.old', 0, 2, undefined]]);
+  assert.deepEqual(budget(counts).lines, ['no-clef   100% 2/2 acme@2 c.old', 'declared  100% 2/2 acme@2 c.skip [declared 2]', 'UNHEALTHY  40% 2/5 acme@2 c.new [unsure 1, over-window 1, outage 2]']);
+});
+
 // A Clef stand-in that answers each question of a request by the unit's text and the question, so every item gets its own probability.
 async function clefBy(t: TestContext, p: (text: string, instructions: string) => number, status = 200) {
   const server = createServer(async (req, res) => {

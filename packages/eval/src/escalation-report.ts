@@ -1,10 +1,12 @@
 // Each rubric check's escalation rate over the verdicts in a directory of catalog exports (`quack export <key> <dir>/<name>.json`):
-// escalated / (decision model + escalated) per rubric@version and check; over budget is UNHEALTHY, and one Clef never settled is no-clef, listed apart.
+// escalated / (decision model + escalated) per rubric@version and check, with the causes a verdict records; over budget is UNHEALTHY, and an old verdict's check Clef never settled is no-clef, listed apart.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { Verdict } from '@quack/judge';
 import { budget, escalated } from './judge-replay.ts';
+
+const CAUSELESS = ['outage'];
 
 const USAGE = 'usage: escalation-report.ts <exports-dir> [--decision-model <modelId>] [--since <epoch ms>]';
 
@@ -13,7 +15,15 @@ type Exported = { artifacts: Array<{ sealedAt: number; verdict?: Verdict | null 
 /** One count per check of every judge verdict sealed at or after `since`: items the decision model settled, and those a model besides it escalated to. */
 export function countsOf(exports: Exported[], decisionModel: string, since = 0) {
   const verdicts = exports.flatMap((e) => e.artifacts).filter((a) => Array.isArray(a.verdict?.checks) && a.sealedAt >= since).map((a) => a.verdict!);
-  return verdicts.flatMap((v) => v.checks.map((c) => ({ key: `${v.rubric} ${c.criterion}.${c.id}`, clef: c.resolvers[decisionModel] ?? 0, esc: escalated(c.resolvers, decisionModel) })));
+  return verdicts.flatMap((v) => v.checks.map((c) => {
+    const key = `${v.rubric} ${c.criterion}.${c.id}`;
+    const clef = c.resolvers[decisionModel] ?? 0;
+    if (!c.escalated) return { key, clef, esc: escalated(c.resolvers, decisionModel) };
+    // An outage leaves its item undecided, so it is shown but not rated as an escalation.
+    const causes = Object.entries(c.escalated).filter(([k]) => !CAUSELESS.includes(k)).map(([, n]) => n);
+    const declared = Object.keys(c.escalated).every((k) => k === 'declared');
+    return { key, clef, esc: causes.reduce((a, b) => a + b, 0), causes: c.escalated, ...(declared && { route: 'declared' as const }) };
+  }));
 }
 
 // A file that is not a quack export costs only itself.
