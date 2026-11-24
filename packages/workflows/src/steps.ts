@@ -4,7 +4,7 @@ import type { Schema } from '@earendil-works/pi-schema';
 import type { JsonValue } from '@earendil-works/chord';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { feedback, judged, type Judged, type Verdict } from '@quack/judge';
-import { Artifacts, decide, observeGeneration, person as sdkPerson, seal, SealRefused, sealedVersion, type ArtifactKind, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { Artifacts, decide, latestSealed, observeGeneration, person as sdkPerson, seal, SealRefused, sealedVersion, type ArtifactKind, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -119,7 +119,7 @@ async function revise(step: Extract<Step, { kind: 'judged' }>, c: StepContext, m
     if (err instanceof SealRefused) return err;
     throw err;
   });
-  const sealed = (await c.api.snapshot(Artifacts, c.api.conversationId, c.ctx))!.kinds[step.artifact.kind].versions.at(-1)!;
+  const sealed = latestSealed(await c.api.snapshot(Artifacts, c.api.conversationId, c.ctx), step.artifact.kind)!;
   if (refused && (refused.verdict.kind === 'deny' || !sealed.verdict)) throw new Error(refused.message);
   return c.api.memo<Revision>(key, { version: sealed.version, reply: answer.reply, cost: answer.cost, ...(refused && { failed: refused.message }) }, c.ctx);
 }

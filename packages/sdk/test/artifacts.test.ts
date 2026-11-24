@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { LiveDoc, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Artifacts, artifactsExtension, type ArtifactKind, type SealedArtifact } from '../src/index.ts';
+import { Artifacts, artifactsExtension, latestSealed, sealedVersions, type ArtifactKind, type SealedArtifact } from '../src/index.ts';
 
 const note: ArtifactKind = { kind: 'test.note', path: 'artifacts/note.md', tool: 'submit_note' };
 const delivered = (): SealedArtifact => ({ kind: note.kind, version: 1, hash: 'h1', content: 'ok', sealedAt: 0, verdict: { passed: true }, final: { input: 'in-1', refused: 0 } });
@@ -36,4 +36,15 @@ test('a seal call replayed after a crash counts its refusal once; only a later c
   assert.equal(doc.kinds[note.kind].versions[0].final!.refused, 1);
   assert.equal(outcome(await sealTool.execute({}, callApi(doc).api, BACKGROUND_CONTEXT)), 'deny', 'a second call is the second refusal');
   assert.deepEqual(doc.kinds[note.kind].versions.map((v) => v.version), [1], 'nothing past the delivered version is sealed');
+});
+
+test('sealedVersions and latestSealed read a doc that has none, an empty kind, and a sealed one', () => {
+  const [one, two] = [delivered(), { ...delivered(), version: 2 }];
+  const doc = { kinds: { [note.kind]: { versions: [one, two] }, empty: { versions: [] } } };
+  assert.deepEqual(sealedVersions(undefined, note.kind), []);
+  assert.deepEqual(sealedVersions(doc, 'missing'), []);
+  assert.deepEqual(sealedVersions(doc, 'empty'), []);
+  assert.equal(latestSealed(doc, 'missing'), undefined);
+  assert.equal(latestSealed(doc, 'empty'), undefined);
+  assert.equal(latestSealed(doc, note.kind), two);
 });

@@ -1,14 +1,13 @@
-import type { CodeResult, Declaration, Evidence, Inputs, Rubric } from '@quack/judge';
+import { factsOf, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric } from '@quack/judge';
 import { parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { TrendsCard } from './card.ts';
 import type { TrendsFacts } from './facts.ts';
 
 const parse = (artifact: string) => parseCard<TrendsCard>(artifact);
-const factsOf = (ev: Evidence) => ev.facts[0].state.facts as unknown as TrendsFacts;
 
 // Ids key the card and the UI shows names; the digit and comma guards keep an add count from reading as an id.
 function noBareIds(artifact: string, ev: Evidence): CodeResult {
-  const ids = Object.keys(factsOf(ev).players);
+  const ids = Object.keys(factsOf<TrendsFacts>(ev).players);
   const { items } = parse(artifact);
   const bad = items.filter((i) => ids.some((id) => new RegExp(`(?<![\\d,.])${id}(?![\\d,])`).test(i.text)));
   return share(items.length - bad.length, items.length, `${bad.map((i) => i.text.slice(0, 30)).join('; ')} carry a raw player id in their text`);

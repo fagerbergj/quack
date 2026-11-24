@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool, GenerationTask, hook, LiveDoc, type ConversationId, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Approvals, Artifacts, gated, withdrawApprovals, type Approval, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, gated, latestSealed, sealedVersions, withdrawApprovals, type Approval, type ArtifactsView, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { lastReviewBlock, reasonSummary } from './reason.ts';
 import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, type ContractSpec } from './spec.ts';
@@ -46,14 +46,14 @@ async function reconcile(api: ToolExecutionApi, ctx: Context) {
   }, ctx);
 }
 
-type Versions = Record<string, { versions: SealedArtifact[] } | undefined>;
 const passed = (v: SealedArtifact) => (v.verdict as { passed?: boolean } | null)?.passed === true;
 
 /** The spec the newest approval before artifact `before` approved. A record names its artifact; an older record without one is
  * matched as the last passing artifact of its spec version sealed by the time the approval was requested. */
-export function approvedSpec(all: Versions, approvals: Record<string, Approval>, before = Infinity): SealedArtifact | undefined {
-  const specs = (all[CONTRACT_KIND]?.versions ?? []).filter((v) => v.version < before && passed(v));
-  const recorded = (all[APPROVED_KIND]?.versions ?? []).map((r) => JSON.parse(r.content) as Proposed & { approval?: string });
+export function approvedSpec(all: NonNullable<ArtifactsView>['kinds'], approvals: Record<string, Approval>, before = Infinity): SealedArtifact | undefined {
+  const doc = { kinds: all };
+  const specs = sealedVersions(doc, CONTRACT_KIND).filter((v) => v.version < before && passed(v));
+  const recorded = sealedVersions(doc, APPROVED_KIND).map((r) => JSON.parse(r.content) as Proposed & { approval?: string });
   // A decided approval not yet written down by `reconcile` counts too, and outranks recorded ones: it was decided after the last reconcile.
   const pending = Object.entries(approvals).filter(([id, a]) => a.tool === 'propose_contract' && a.verdict?.decision === 'approve' && !a.withdrawn && !recorded.some((r) => r.approval === id));
   for (const { version, artifact, approval } of [...recorded, ...pending.map(([approval, a]) => ({ ...(a.args as Proposed), approval }))].toReversed()) {
@@ -95,12 +95,12 @@ function rejectedText(text: string, version: number, was: ContractSpec | undefin
  * approver reads (lint findings, breaks against the approved version) are computed here in code, not taken from the agent's account. */
 export async function proposeVersion(sealed: SealedArtifact, api: ToolExecutionApi, ctx: Context): Promise<Outcome> {
   await reconcile(api, ctx);
-  const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
+  const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
   const spec = parseSpec(sealed.content);
   // Read back, not from `sealed`: the caller's copy may predate the verdict attached to it.
-  const newest = all[CONTRACT_KIND]?.versions.at(-1);
+  const newest = latestSealed(doc, CONTRACT_KIND);
   if (newest?.version !== sealed.version || !passed(newest) || typeof spec === 'string') return NOT_NEWEST;
-  const base = approvedSpec(all, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {});
+  const base = approvedSpec(doc?.kinds ?? {}, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {});
   if (base?.version === sealed.version) return { text: `Version ${spec.version} is approved.` };
   const was = base && (parseSpec(base.content) as ContractSpec);
   if (was && was.version === spec.version) return { text: `Version ${spec.version} is already approved; write version ${spec.version + 1} to change it.`, isError: true };
@@ -122,14 +122,14 @@ export const proposeContractTool: ToolRegistration = defineTool({
   parameters: obj({}, { open: true }),
   replay: 'safe',
   async execute(_args, api, ctx) {
-    const newest = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[CONTRACT_KIND]?.versions.at(-1);
+    const newest = latestSealed(await api.snapshot(Artifacts, api.conversationId, ctx), CONTRACT_KIND);
     const r = newest ? await proposeVersion(newest, api, ctx) : NOT_NEWEST;
     return reply(r.text, r.isError);
   },
 }) as ToolRegistration;
 
-const isDiscarded = (all: Versions, artifact: number) =>
-  (all[DISCARDED_KIND]?.versions ?? []).some((v) => (JSON.parse(v.content) as { artifact?: number }).artifact === artifact);
+const isDiscarded = (doc: ArtifactsView, artifact: number) =>
+  sealedVersions(doc, DISCARDED_KIND).some((v) => (JSON.parse(v.content) as { artifact?: number }).artifact === artifact);
 
 /** Drops an unwanted unapproved draft, restoring the last approved spec to the workspace and satisfying the yield guard. */
 export const discardDraftTool: ToolRegistration = defineTool({
@@ -139,13 +139,13 @@ export const discardDraftTool: ToolRegistration = defineTool({
   replay: 'safe',
   async execute(_args, api, ctx) {
     await reconcile(api, ctx);
-    const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
+    const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
     const approvals = (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {};
-    const base = approvedSpec(all, approvals);
+    const base = approvedSpec(doc?.kinds ?? {}, approvals);
     if (!base) return reply('No approved version to return to.', true);
     const baseSpec = parseSpec(base.content) as ContractSpec;
-    const newest = all[CONTRACT_KIND]?.versions.at(-1);
-    if (!newest || newest.version === base.version || isDiscarded(all, newest.version)) return reply(`Version ${baseSpec.version} is already the current version.`);
+    const newest = latestSealed(doc, CONTRACT_KIND);
+    if (!newest || newest.version === base.version || isDiscarded(doc, newest.version)) return reply(`Version ${baseSpec.version} is already the current version.`);
     await api.env?.writeFile(CONTRACT_PATH, base.content, ctx);
     await supersedeProposals(Infinity, api, ctx);
     const content = JSON.stringify({ artifact: newest.version, restored: base.version, version: baseSpec.version });
@@ -168,11 +168,11 @@ export function awaitingApproval() {
   const asked = new Map<ConversationId, string>();
   return hook(GenerationTask, {
     async onYield(_answer, api, ctx) {
-      const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
-      const newest = all[CONTRACT_KIND]?.versions.at(-1);
-      if (!newest || !passed(newest) || isDiscarded(all, newest.version)) return undefined;
+      const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+      const newest = latestSealed(doc, CONTRACT_KIND);
+      if (!newest || !passed(newest) || isDiscarded(doc, newest.version)) return undefined;
       const approvals = (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {};
-      if (approvedSpec(all, approvals)?.version === newest.version) return undefined;
+      if (approvedSpec(doc?.kinds ?? {}, approvals)?.version === newest.version) return undefined;
       const run = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0];
       const proposals = Object.values(approvals).filter((a) => a.tool === 'propose_contract' && (a.args as Proposed).artifact === newest.version).length;
       const key = `${String(run)}:${newest.version}:${proposals}`;
