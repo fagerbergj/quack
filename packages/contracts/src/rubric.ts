@@ -2,8 +2,8 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { PASS_ONLY, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
-import { Approvals, Artifacts, type Approval, type RecordedSession, type SealedArtifact } from '@quack/sdk';
+import { PASS_ONLY, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, factsOf, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { Approvals, Artifacts, sealedVersions, type Approval, type ArtifactsView, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
@@ -35,10 +35,9 @@ function pointerResolves(doc: unknown, pointer: string): boolean {
 const strayPointers = (spec: ContractSpec) => spec.choices.filter((c) => !pointerResolves(spec.document, c.pointer)).map((c) => `${c.id}: pointer \`${c.pointer}\` is not in the document`);
 
 type SpecState = { unresolved: string[]; breaking: Array<{ id: string; text: string; operation?: string; path?: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
-const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals. */
-type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval> };
+type World = { kinds: NonNullable<ArtifactsView>['kinds']; approvals: Record<string, Approval> };
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (name: string) => new RegExp(`(?<![\\w$])${escRe(name)}(?![\\w$])`);
@@ -126,7 +125,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
   // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
-  const cleared = (w.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
+  const cleared = sealedVersions(w, CONTRACT_KIND).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
   // Breaks are against the approved spec only: a rejected draft is not a baseline, and shipped code has no earlier spec to diff.
   const base = approvedSpec(w.kinds, w.approvals, sealed.version);
   const prev = base && (parseSpec(base.content) as ContractSpec);
@@ -182,26 +181,26 @@ export async function recordedSpecInputs(session: RecordedSession, content: stri
 const list = (items: string[]) => items.slice(0, 6).join('; ');
 
 function versionMatches(_a: string, ev: Evidence): CodeResult {
-  const { version, expected } = state(ev);
+  const { version, expected } = factsOf<SpecState>(ev);
   return { met: version === expected ? 1 : 0, detail: version === expected ? undefined : `version is ${version}; this is spec version ${expected} (one more than the last delivered), so set version to ${expected}` };
 }
 
 // The seal checks the baseline's shape; only here are the approvals known. "shipped" is the author's claim, which the reviewer checks.
 function baselineMatches(_a: string, ev: Evidence): CodeResult {
-  const { baseline, approved } = state(ev);
+  const { baseline, approved } = factsOf<SpecState>(ev);
   if (approved !== undefined) return baseline === approved ? { met: 1 } : { met: 0, detail: `version ${approved} of this contract is approved, so set baseline to ${approved} and write changes and compatibility against it` };
   if (typeof baseline !== 'number') return { met: 1 };
   return { met: 0, detail: `baseline is ${baseline}, but no version of this contract is approved: set it to "shipped" if the surface is already in use, else leave baseline, changes and compatibility out` };
 }
 
 function pointersResolve(_a: string, ev: Evidence): CodeResult {
-  const { unresolved } = state(ev);
+  const { unresolved } = factsOf<SpecState>(ev);
   return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Point each choice at the part of the document it decides.` : undefined };
 }
 
 // Break by break: an entry must name each place the kind's diff found, and a safe note that names an unnamed one is reported with it.
 function breakingNamed(_a: string, ev: Evidence): CodeResult {
-  const { breaking, compatibility } = state(ev);
+  const { breaking, compatibility } = factsOf<SpecState>(ev);
   if (!breaking.length) return { met: 1 };
   const named = compatibility?.breaking ?? [];
   const unnamed = unnamedBreaks(named, breaking);

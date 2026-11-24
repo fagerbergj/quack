@@ -9,9 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
-import type { Declaration, Rubric } from '@quack/judge';
+import { PASS_ONLY, type CheckDecl, type Declaration, type Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
+import { armAt, budget, countsOf, loadArm, outcomes, packagesTar, replayJudge, table, tally, type Arm, type Case, type Row } from '../src/index.ts';
 
 const rubric: Rubric = {
   name: 'acme', version: 1, threshold: 0.5,
@@ -121,6 +121,15 @@ test('arms that differ only in decision model: the decision-model arm answers fr
   assert.match(out[5], /^- base: requests 1 \(j 1\); items decision model 0, escalated 1, reused 0;/);
   assert.match(out[6], /^- clef: requests 1 \(clef 1\); items decision model 1, escalated 0, reused 0;/, 'a decision-model request counts under its model');
   assert.equal(out[10], '- a helpful: base 1; clef 0');
+  assert.deepEqual(result.rows.map((r) => [r.arm, r.rubric, r.criterion, r.route]).sort(), [['base', 'acme@1', 'c', 'not-asked'], ['clef', 'acme@1', 'c', 'asked']], 'rows name their rubric and criterion, so same-named checks stay apart, and whether the arm asked the decision model');
+});
+
+test('a row marks a check declared off the decision model', async () => {
+  const off = adapter('Is it helpful?');
+  const decl = off.judge!.declaration as Declaration;
+  const skip = { ...off, judge: { ...off.judge!, declaration: { ...decl, checks: { ...decl.checks, helpful: { ...decl.checks.helpful, decisionModel: false as const } } } } };
+  const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [skip] }], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel });
+  assert.deepEqual(result.rows.map((r) => [r.check, r.route]), [['helpful', 'declared']]);
 });
 
 test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
@@ -262,4 +271,150 @@ test('watch skips checks an arm lacks (erroring only if no arm has them) and tab
   assert.doesNotMatch(md, /\| a \| helpful \|/);
   assert.match(md, /- cand: requests 2 \(j 2\); items decision model 0, escalated 2/);
   await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
+});
+
+test('the budget rates each key escalated over asked, highest first, fails only asked keys over 10% and lists keys never asked apart', () => {
+  const { lines, unhealthy } = budget([
+    { key: 'a x', clef: 9, esc: 1, route: 'asked' }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 },
+    { key: 'd skip', clef: 0, esc: 4, route: 'declared' }, { key: 'n none', clef: 0, esc: 3, route: 'not-asked' }, { key: 'o over', clef: 0, esc: 2, route: 'asked' }, { key: 'x export', clef: 0, esc: 1 },
+  ]);
+  assert.deepEqual(lines, ['declared  100% 4/4 d skip', 'not-asked 100% 3/3 n none', 'UNHEALTHY 100% 2/2 o over', 'no-clef   100% 1/1 x export', 'UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
+  assert.equal(unhealthy, 2, 'an asked check Clef settled nothing for (over its cap, or always unsure) still fails');
+});
+
+test('an export report counts each verdict check by rubric, the decision model\'s items apart from escalated ones and code, from the given time', () => {
+  const check = (id: string, resolvers: Record<string, number>) => ({ criterion: 'c', id, label: id, weight: 1, met: true, units: 1, resolvers, notes: [] });
+  const verdict = { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'acme@2', undecided: [], checks: [check('why', { clef: 3, 'qwen3.8-27b': 1, code: 2 }), check('how', { 'agent-model': 2 })] };
+  const exports = [{ artifacts: [{ sealedAt: 5, verdict }, { sealedAt: 1, verdict }, { sealedAt: 9, verdict: null }, { sealedAt: 9, verdict: {} as never }] }];
+  assert.deepEqual(countsOf(exports, 'clef', 2), [{ key: 'acme@2 c.why', clef: 3, esc: 1 }, { key: 'acme@2 c.how', clef: 0, esc: 2 }]);
+});
+
+// A Clef stand-in that answers each question of a request by the unit's text and the question, so every item gets its own probability.
+async function clefBy(t: TestContext, p: (text: string, instructions: string) => number, status = 200) {
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    type Piece = { piece: { text: string } };
+    const body = JSON.parse(raw) as { state: Partial<Piece> & { items?: Piece[] }; questions: Record<string, { instructions: string }> };
+    // A packed request names its items in `items` and each question's item by index.
+    const text = (q: string) => body.state.piece?.text ?? body.state.items![Number(/items\[(\d+)\]/.exec(q)![1])].piece.text;
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([q, v]) => [q, { type: 'noul', noul: p(text(v.instructions), v.instructions) }]));
+    res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(status === 200 ? { answers, usage: { input_tokens: 1, output_tokens: 0 } } : { error: 'refused' }));
+  }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const key = process.env.QUACK_CLEF_KEY;
+  process.env.QUACK_CLEF_KEY = 'none';
+  t.after(() => (server.close(), key === undefined ? delete process.env.QUACK_CLEF_KEY : (process.env.QUACK_CLEF_KEY = key)));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const clef = { id: 'clef', name: 'clef', type: 'classifier', api: 'typesafe-system-one', provider: 'clef', baseUrl, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192 };
+  return createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } });
+}
+const clefRef = (maxInputTokens = 8192) => ({ provider: 'clef', modelId: 'clef', maxInputTokens });
+const notes = (...keys: string[]) => JSON.stringify(Object.fromEntries(keys.map((k) => [k, { text: k }])));
+const oneCheck = (aggregate: 'share' | 'all'): EvalAdapter => ({ kind: 'acme.note', judge: { inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 1 }] }] },
+  declaration: { scopes: { note: { split: { name: 'jsonItems', from: 'note' } } }, checks: { helpful: { scope: 'note', aggregate: { name: aggregate }, question: { type: 'bool', instructions: 'Is it helpful?' } } } } } });
+
+test('decision-only asks no judge model, records each escalated item with its cause, and bounds each round\'s verdict', async (t) => {
+  const { models, asked } = judgeBy(() => true);
+  // x passes both; y is unsure on helpful and a no on the pass-only strict; z is a no that stands on helpful.
+  const answers: Record<string, [number, number]> = { x: [0.95, 0.95], y: [0.5, 0.05], z: [0.05, 0.95] };
+  models.setProvider(await clefBy(t, (text, q) => answers[text][q.includes('strict') ? 1 : 0]));
+  const decl: Declaration = {
+    scopes: { note: { split: { name: 'jsonItems', from: 'note' } }, gap: { split: { name: 'jsonItems', from: 'gap' } } },
+    checks: {
+      helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it helpful?' } },
+      strict: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it strict?' }, decisionModel: PASS_ONLY },
+      manual: { scope: 'gap', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Manual?' }, decisionModel: false },
+    },
+  };
+  // Score = (2 helpful + strict + manual) / 4: 1/3 with every escalated item failing, 5/6 with every one passing.
+  const at = (threshold: number): EvalAdapter => ({ kind: 'acme.note', judge: { declaration: decl, inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 2 }, { id: 'strict', label: 'S', weight: 1 }, { id: 'manual', label: 'M', weight: 1 }] }] } } });
+  const clef = (maxInputTokens: number) => ({ provider: 'clef', modelId: 'clef', maxInputTokens });
+  const arms: Arm[] = [{ label: 'low', adapters: [at(0.3)], decisionModel: clef(8192) }, { label: 'mid', adapters: [at(0.5)], decisionModel: clef(8192) }, { label: 'high', adapters: [at(0.9)], decisionModel: clef(8192) }, { label: 'tight', adapters: [at(0.5)], decisionModel: clef(1) }];
+  const note = JSON.stringify(Object.fromEntries(['x', 'y', 'z'].map((k) => [k, { text: k }])));
+  const result = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note, gap: JSON.stringify({ g: { text: 'g' } }) } }], arms, repeat: 2, concurrency: 1, models, judgeModel, seed: 1, decisionOnly: true });
+  assert.deepEqual(asked, [], 'no judge-model request');
+  const of = (arm: string) => Object.fromEntries(result.rows.filter((r) => r.arm === arm).map((r) => [r.check, [r.verdict, r.esc, r.clef, r.items]]));
+  assert.deepEqual(of('mid'), {
+    helpful: ['open', 1, 2, { 'note x': 'pass', 'note y': 'unsure', 'note z': 'no' }],
+    strict: ['open', 1, 2, { 'note x': 'pass', 'note y': 'pass-only-no', 'note z': 'pass' }],
+    manual: ['open', 1, 0, { 'gap g': 'declared' }],
+  });
+  assert.deepEqual(result.rows.filter((r) => r.arm === 'tight' && r.rep === 1).map((r) => [r.check, r.items]), [['helpful', { 'note x': 'over-window', 'note y': 'over-window', 'note z': 'over-window' }], ['strict', { 'note x': 'over-window', 'note y': 'over-window', 'note z': 'over-window' }], ['manual', { 'gap g': 'declared' }]]);
+  assert.deepEqual(arms.map((a) => result.rows.find((r) => r.arm === a.label)?.verdict), ['pass', 'open', 'fail', 'open']);
+  assert.deepEqual(result.rows.find((r) => r.arm === 'mid')?.requests, { clef: 3 }, 'one Clef request per unit, none from the bound rounds');
+  // Two checks judge scope note, so each labelled unit is reported, and totalled, once per check and repeat.
+  const out = table(result, ['mid'], undefined, { a: { 'note x': { flag: false }, 'note y': { flag: true }, 'note z': { flag: false }, 'note w': { flag: true } } }).split('\n');
+  assert.match(out.find((l) => l.startsWith('- mid: requests'))!, /escalated 6, reused 0 \(declared 2, unsure 2, pass-only-no 2, over-window 0, refused 0, outage 0\); verdicts pass 0, fail 0, open 2; judge seconds/);
+  assert.ok(out.includes('- a: mid open open'));
+  const from = out.indexOf('labelled items (case unit check: outcome per repeat by arm; "-" when no check judged it):');
+  assert.deepEqual(out.slice(from + 1, from + 11), [
+    '- a note x helpful (false flag): mid false-flag-cleared false-flag-cleared', '- a note x strict (false flag): mid false-flag-cleared false-flag-cleared',
+    '- a note y helpful (real): mid caught caught', '- a note y strict (real): mid caught caught',
+    '- a note z helpful (false flag): mid flagged flagged', '- a note z strict (false flag): mid false-flag-cleared false-flag-cleared',
+    '- a note w - (real): mid unjudged',
+    'labelled totals per arm and check:',
+    '- mid helpful: caught 2, passed-by-clef 0, false-flag-cleared 2, flagged 2, unjudged 0',
+    '- mid strict: caught 2, passed-by-clef 0, false-flag-cleared 4, flagged 0, unjudged 0',
+  ]);
+});
+
+test('decision-only reads a packed request\'s answers back to their items', async (t) => {
+  const { models } = judgeBy(() => true);
+  models.setProvider(await clefBy(t, (text) => ({ x: 0.95, y: 0.5, z: 0.05 })[text]!));
+  const decl: Declaration = { scopes: { note: { split: { name: 'jsonItems', from: 'note' }, context: { doc: { name: 'whole', from: 'doc' } } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it helpful?' } } } };
+  const packed: EvalAdapter = { kind: 'acme.note', judge: { declaration: decl, inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 1 }] }] } } };
+  const note = JSON.stringify(Object.fromEntries(['x', 'y', 'z'].map((k) => [k, { text: k }])));
+  const { rows } = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note, doc: 'shared' } }], arms: [{ label: 'base', adapters: [packed], decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true });
+  assert.deepEqual(rows.map((r) => [r.requests, r.items, r.verdict]), [[{ clef: 1 }, { 'note x': 'pass', 'note y': 'unsure', 'note z': 'no' }, 'open']], 'one packed request, its answers by item');
+});
+
+test('decision-only refuses an arm without a decision model or with reuse', async () => {
+  const run = (arm: Arm) => replayJudge({ cases: [cases[0]], arms: [arm], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel, decisionOnly: true });
+  await assert.rejects(run({ label: 'bare', adapters: [oneCheck('share')] }), /decision-only needs a decision model and no reuse on every arm: bare/);
+  await assert.rejects(run({ label: 'kept', adapters: [oneCheck('share')], decisionModel: clefRef(), reuse: true }), /decision-only needs a decision model and no reuse on every arm: kept/);
+});
+
+test('decision-only leaves an item unasked once its check decided, and a labelled item reads unjudged then', async (t) => {
+  const { models } = judgeBy(() => true);
+  // x's no decides the all-fold, so y, unsure, never escalates.
+  models.setProvider(await clefBy(t, (text) => ({ x: 0.05, y: 0.5 })[text]!));
+  const result = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note: notes('x', 'y') } }], arms: [{ label: 'base', adapters: [oneCheck('all')], decisionModel: clefRef() }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true });
+  assert.deepEqual(result.rows.map((r) => [r.met, r.esc, r.verdict, r.items]), [[0, 0, 'fail', { 'note x': 'no', 'note y': 'unasked' }]]);
+  const out = table(result, ['base'], undefined, { a: { 'note x': { flag: true }, 'note y': { flag: true } } }).split('\n');
+  assert.ok(out.includes('- a note x helpful (real): base caught') && out.includes('- a note y helpful (real): base unjudged'));
+  assert.ok(out.includes('- base helpful: caught 1, passed-by-clef 0, false-flag-cleared 0, flagged 0, unjudged 1'));
+});
+
+test('a decision-only round Clef never answers marks its items outage and fails the run, keeping its rows', async (t) => {
+  const { models, asked } = judgeBy(() => true);
+  // The retry backoff (2 s and up) has no seam through replayJudge, so it fires at once; shorter timers stay real.
+  const real = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', ((fn: () => void, ms?: number, ...r: unknown[]) => real(fn, (ms ?? 0) >= 1000 ? 0 : ms, ...r)) as typeof setTimeout);
+  models.setProvider(await clefBy(t, () => 0.95, 503));
+  const written: Row[] = [];
+  await assert.rejects(replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note: notes('x', 'y') } }], arms: [{ label: 'base', adapters: [oneCheck('share')], decisionModel: clefRef() }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true, onRows: (rows) => written.push(...rows) }), /base a: the decision model answered no request for 2 units \(an outage\)/);
+  assert.deepEqual(written.map((r) => [r.outage, r.verdict, r.items]), [[2, 'open', { 'note x': 'outage', 'note y': 'outage' }]]);
+  assert.deepEqual(asked, [], 'no judge-model request');
+});
+
+test('a check claims only its own scope\'s unanswered units as outage, however many checks read the failed scope', () => {
+  const s = { api: undefined as never, probabilities: new Map([['a x\tq', 0.95]]), escalated: new Set<string>(), down: () => new Set(['b y']), refused: () => new Set<string>() };
+  const decl = (scope: string) => ({ scope }) as CheckDecl;
+  assert.deepEqual(outcomes(s, 'q', decl('a'), 0.9), { 'a x': 'pass' });
+  assert.deepEqual(outcomes(s, 'r', decl('b'), 0.9), { 'b y': 'outage' });
+  assert.deepEqual(outcomes(s, 'r', decl('bb'), 0.9), {});
+});
+
+test('the report tallies its rated lines by mark', () => {
+  assert.equal(tally(['UNHEALTHY 20% 2/10 b y', 'ok         10% 1/10 a x', 'no-clef   100% 1/1 x export', 'ok          0% 0/5 c z']), '1 UNHEALTHY, 1 no-clef, 2 ok, 0 declared, 0 not-asked');
+});
+
+test('decision-only reports items of a group Clef refused as refused, not over-window', async (t) => {
+  const { models } = judgeBy(() => true);
+  models.setProvider(await clefBy(t, () => 0.95, 400));
+  const decl: Declaration = { scopes: { note: { split: { name: 'jsonItems', from: 'note' }, context: { doc: { name: 'whole', from: 'doc' } } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it helpful?' } } } };
+  const packed: EvalAdapter = { kind: 'acme.note', judge: { declaration: decl, inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 1 }] }] } } };
+  const { rows } = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note: notes('x', 'y'), doc: 'shared' } }], arms: [{ label: 'base', adapters: [packed], decisionModel: clefRef() }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true });
+  assert.deepEqual(rows.map((r) => [r.outage, r.items]), [[0, { 'note x': 'refused', 'note y': 'refused' }]]);
 });

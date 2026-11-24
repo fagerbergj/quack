@@ -10,11 +10,6 @@ export class FakeClock implements Clock {
     this.#timers.push(timer);
     return () => void (this.#timers = this.#timers.filter((x) => x !== timer));
   };
-  sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const cancel = this.setTimer(resolve, ms);
-    signal?.addEventListener('abort', () => (cancel(), reject(signal.reason)), { once: true });
-  });
   reset() {
     this.#timers = [];
   }

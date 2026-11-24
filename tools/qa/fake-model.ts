@@ -1,9 +1,9 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 
 export const FAKE_MODEL = 'qa-fake';
 
-/** One canned answer: text, or a single tool call. */
-export type FakeReply = { content: string } | { tool: { name: string; arguments: object } };
+/** One canned answer: text, or a single tool call; `delayMs` holds it back, so a step can watch work in flight. */
+export type FakeReply = ({ content: string } | { tool: { name: string; arguments: object } }) & { delayMs?: number };
 /** Picks the answer from the chat request body (its messages and offered tools). */
 export type FakeScript = (request: { messages?: Array<{ role: string; content?: unknown }>; tools?: Array<{ function?: { name?: string } }> }) => FakeReply;
 
@@ -19,6 +19,19 @@ function choice(reply: FakeReply, stream: boolean) {
   return { index: 0, delta: { role: 'assistant', content, ...(call && { tool_calls: [call] }) }, finish };
 }
 
+function answer(res: ServerResponse, stream: boolean, reply: FakeReply) {
+  const base = { id: 'qa', object: stream ? 'chat.completion.chunk' : 'chat.completion', created: 0, model: FAKE_MODEL };
+  const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
+  const picked = choice(reply, stream);
+  if (!stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...base, choices: [picked], usage }));
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const send = (c: object, extra = {}) => res.write(`data: ${JSON.stringify({ ...base, choices: [c], ...extra })}\n\n`);
+  const { finish, ...delta } = picked as { finish: string; index: number; delta: object };
+  send(delta);
+  send({ index: 0, delta: {}, finish_reason: finish }, { usage });
+  res.end('data: [DONE]\n\n');
+}
+
 /** An OpenAI-compatible endpoint that answers every chat request with `reply` (or what `reply` picks), so seeded sessions need no real model. */
 export function fakeModel(reply: string | FakeScript): Promise<{ server: Server; url: string }> {
   const script: FakeScript = typeof reply === 'string' ? () => ({ content: reply }) : reply;
@@ -27,17 +40,9 @@ export function fakeModel(reply: string | FakeScript): Promise<{ server: Server;
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const request = parse(body);
-      const stream = request.stream === true;
-      const base = { id: 'qa', object: stream ? 'chat.completion.chunk' : 'chat.completion', created: 0, model: FAKE_MODEL };
-      const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
-      const picked = choice(script(request), stream);
-      if (!stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...base, choices: [picked], usage }));
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      const send = (c: object, extra = {}) => res.write(`data: ${JSON.stringify({ ...base, choices: [c], ...extra })}\n\n`);
-      const { finish, ...delta } = picked as { finish: string; index: number; delta: object };
-      send(delta);
-      send({ index: 0, delta: {}, finish_reason: finish }, { usage });
-      res.end('data: [DONE]\n\n');
+      const picked = script(request);
+      // A held reply can outlive its requester; writing to the abandoned socket would throw in the rig.
+      setTimeout(() => !res.destroyed && answer(res, request.stream === true, picked), picked.delayMs ?? 0);
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1` })));

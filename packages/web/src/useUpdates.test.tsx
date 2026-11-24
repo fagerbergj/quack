@@ -1,7 +1,8 @@
 import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { outdated, unsaved, useUpdates } from './useUpdates.ts';
-import { routes, useHarness } from './test-harness.ts';
+import type { Version } from './api.ts';
+import { useHarness } from './test-harness.ts';
 
 useHarness(() => ({ 'GET /version': { commit: 'old', builtAt: null } }));
 
@@ -21,13 +22,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// The build this page loaded with is read on mount; a deploy changes what /version answers afterwards.
+// The build this page loaded with is read on mount; a deploy's restart reopens the change stream, whose hello names the new build.
 const mount = async () => {
   const reload = vi.fn();
-  renderHook(() => useUpdates(reload));
+  const hook = renderHook(({ served }) => useUpdates(served, reload), { initialProps: { served: { commit: 'old', builtAt: null } as Version | undefined } });
   await act(async () => {});
-  routes['GET /version'] = { commit: 'new', builtAt: null };
-  return reload;
+  return { reload, hello: async (commit: string) => act(async () => hook.rerender({ served: { commit, builtAt: null } })) };
 };
 
 test('a build is outdated only when both sides are known and differ', () => {
@@ -49,8 +49,9 @@ test('a typed field, pending attachments or an open dialog count as unsaved; an 
 });
 
 test('coming back to a clean page after a deploy reloads it at once', async () => {
-  const reload = await mount();
+  const { reload, hello } = await mount();
   await turn('hidden');
+  await hello('new');
   expect(reload).not.toHaveBeenCalled();
   await turn('visible');
   expect(reload).toHaveBeenCalledOnce();
@@ -58,7 +59,8 @@ test('coming back to a clean page after a deploy reloads it at once', async () =
 
 test('a dirty draft defers the reload to the next time the page is hidden and clean', async () => {
   const draft = document.body.appendChild(Object.assign(document.createElement('textarea'), { value: 'not sent yet' }));
-  const reload = await mount();
+  const { reload, hello } = await mount();
+  await hello('new');
   await turn('visible');
   expect(reload).not.toHaveBeenCalled();
   await turn('hidden');
@@ -69,12 +71,11 @@ test('a dirty draft defers the reload to the next time the page is hidden and cl
   draft.remove();
 });
 
-test('a visible page checks every five minutes, and an unchanged build never reloads', async () => {
-  const reload = vi.fn();
-  renderHook(() => useUpdates(reload));
-  await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
-  expect(reload).not.toHaveBeenCalled();
-  routes['GET /version'] = { commit: 'new', builtAt: null };
-  await act(async () => vi.advanceTimersByTimeAsync(5 * 60_000));
+test('a visible clean page reloads as the hello names a new build, and never for the same build', async () => {
+  const { reload, hello } = await mount();
+  await hello('old');
+  await act(async () => vi.advanceTimersByTimeAsync(60 * 60_000));
+  expect(reload, 'nothing is polled').not.toHaveBeenCalled();
+  await hello('new');
   expect(reload).toHaveBeenCalledOnce();
 });

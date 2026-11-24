@@ -1,11 +1,10 @@
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
+import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, factsOf, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
 import { parseReview, type Citation, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
-const factsOf = (ev: Evidence) => ev.facts[0].state.facts as unknown as ReviewFacts;
 
 function citesExistingLines(_artifact: string, ev: Evidence): CodeResult {
-  const { findings } = factsOf(ev);
+  const { findings } = factsOf<ReviewFacts>(ev);
   const missing = findings.filter((f) => !f.cited).map((f) => `finding-${f.id}`);
   return share(findings.length - missing.length, findings.length, `no existing path:line cited in ${missing.join(', ')}`);
 }
@@ -20,7 +19,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   const r = parseReview(artifact);
   // Without a blocking finding, an open question or a failing check calls for `comment`. A gap Verified discloses (a check
   // it could not run) allows `comment` but does not demand it: beside green CI it is still an approve.
-  const ci = ev.facts ? factsOf(ev).ci : '';
+  const ci = ev.facts ? factsOf<ReviewFacts>(ev).ci : '';
   const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(ci);
   const expected = r.findings.some((f) => f.label === 'blocking') ? 'request_changes' : unsettled ? 'comment' : 'approve';
   // CI still running is not green: it allows `comment` the way a disclosed gap does, without demanding it.
@@ -81,7 +80,8 @@ function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('github.descriptionParts', descriptionParts);
 
 // One item per path:line a finding cites, grouped by finding: the finding goes once on the group's shared context.
-const citationItems = (inputs: Inputs): Chunk[] => (JSON.parse(inputs.citations) as Citation[]).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
+// Cases built before the input existed carry none.
+const citationItems = (inputs: Inputs): Chunk[] => (inputs.citations ? (JSON.parse(inputs.citations) as Citation[]) : []).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
 registerSplitter('github.citations', citationItems);
 
 // A backticked command line: env assignments, a lowercase executable, then arguments, flags or quoted strings.

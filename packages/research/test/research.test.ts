@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -6,15 +7,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
+import { claimOf } from '@quack/sdk/report';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { readSession } from '@quack/eval';
-import { buildEvidence, manifest as judgeManifest, type Inputs, type JudgeConfig } from '@quack/judge';
-import { findingItems, formatResults, htmlToText, inputsOf, isPublicAddress, manifest, reportDeclaration, reportInputs, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
+import { readSession, replayJudge } from '@quack/eval';
+import { buildEvidence, decisionModelTokens, manifest as judgeManifest, rejudge, type Inputs, type JudgeConfig, type Verdict } from '@quack/judge';
+import { fakeClef } from '../../contracts/test/clef.ts';
+import { citedIds, findingItems, formatResults, htmlToText, inputsOf, isPublicAddress, manifest, reportDeclaration, reportInputs, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 import { excerpt, missingQuotes, quotedSpans } from '../src/report.ts';
 
 const servers: Server[] = [];
@@ -112,18 +115,10 @@ const report = (cite: string) => `## Summary\nDucks fly.\n## Assumptions\nNone.\
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-// The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes; like the 27B in #2369,
-// it reads any evidence that shows both a 10 ft and a 6 ft cord as a conflict.
+// The judge model says each claim's source states it, so an escalated item never fails a test by itself.
 function judgeFaux() {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  const answer = (c: { messages: unknown[] }) => {
-    const t = JSON.stringify(c.messages);
-    const conflict = t.includes('conflicting figures');
-    const pitfall = t.includes('contradict it?') || conflict;
-    const flag = (conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t));
-    return fauxAssistantMessage(JSON.stringify({ choice: pitfall === flag ? 'yes' : 'no', confidence: 1, reason: flag ? 'the cord is 10 ft and 6 ft' : 'ok' }));
-  };
-  faux.setResponses(Array.from({ length: 200 }, () => answer));
+  faux.setResponses(Array.from({ length: 200 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'states', confidence: 1, reason: 'ok' }))));
   return faux;
 }
 
@@ -434,24 +429,63 @@ test('quotes_exist: a missing quote is met with the nearest passage on the cited
   assert.doesNotMatch(disjoint.detail!, /nearest on the cited page/);
 });
 
-test('the declaration asks each finding alone with its kept sources\' excerpts, and only the grounding checks remain', async () => {
-  const report = '## Summary\nKestrel runs 38 electric buses in 2026. [s1]\n## Assumptions\nNone.\n## Findings\n- Kestrel operates 38 electric buses out of a fleet of 112. [s1]\n- All 28 electric buses are the Vantor E12. [s1][s2]\n- Depots are at Northside. [s9]\n';
-  const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page.' });
-  assert.deepEqual(ev.claim.map((u) => u.id), ['claim finding-1', 'claim finding-2'], 'a finding citing no kept source is not asked');
-  assert.deepEqual(ev.claim[1].state.sources, [{ id: 's1', text: 'Kestrel Transit operates 38 battery-electric buses.' }, { id: 's2', text: 'Vantor E12 page.' }]);
-  assert.deepEqual(ev.claim.map((u) => u.shared), [undefined, undefined], 'nothing is shared, so each finding goes alone');
-  assert.deepEqual(Object.keys(ev), ['sources', 'claim']);
-  assert.deepEqual([researchRubric.version, researchRubric.threshold], [10, 0.8]);
-  assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1], ['contradicted_by_source', -1]]);
+test('each sentence of a finding is a claim, asked of each kept source it cites with that source\'s excerpt', async () => {
+  const report = '## Summary\nx\n## Assumptions\nNone.\n## Findings\n- Kestrel operates 38 electric buses. All are the Vantor E12. [s1][s2]\n- Depots [s1]:\n  - Northside charges at night. [s9]\n  - Quay charges by day. [s2]\n';
+  const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page. The Quay depot charges by day.' });
+  assert.deepEqual(ev.source.map((u) => u.id), ['source finding-1.1 ~ s1', 'source finding-1.1 ~ s2', 'source finding-1.2 ~ s1', 'source finding-1.2 ~ s2', 'source finding-3.1 ~ s2'],
+    'an unmarked sentence takes its finding\'s marks; a lead-in claims nothing; a source whose text was not kept (s9) is not asked');
+  assert.deepEqual(ev.source[0].state, { claim: 'Kestrel operates 38 electric buses.', source: { id: 's1', text: 'Kestrel Transit operates 38 battery-electric buses.' } });
+  assert.deepEqual(ev.source[0].shared, { finding: '- Kestrel operates 38 electric buses. All are the Vantor E12. [s1][s2]' }, 'a finding of several sentences is shared, so its items pack');
+  assert.equal(ev.source[4].shared, undefined, 'a one-sentence finding goes alone');
+  assert.deepEqual(Object.keys(ev), ['sources', 'source']);
+  assert.deepEqual([researchRubric.version, researchRubric.threshold], [11, 0.8]);
+  assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1]]);
+  assert.equal(reportDeclaration.checks.supported_by_source.decisionModel, undefined, 'the decision model settles each item first');
 });
 
-test('a finding citing many long pages keeps a full excerpt of each, and its claim checks go to the judge model, not Clef', async () => {
-  const page = (n: number) => Array.from({ length: 400 }, (_, i) => `Line ${i} of page ${n}: "quoted" harbour budget figures and dredging notes, item ${i * n}.`).join('\n');
-  const many = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`s${i + 1}`, page(i + 1)]));
-  const cites = Object.keys(many).map((id) => `[${id}]`).join('');
-  const ev = await evidenceFor(findings(`The harbour budget covers dredging and repairs. ${cites}`), many);
-  assert.ok((ev.claim[0].state.sources as Array<{ text: string }>).every((s) => s.text.length > 3500 && s.text.length <= 4000));
-  assert.deepEqual(['supported_by_source', 'contradicted_by_source'].map((id) => reportDeclaration.checks[id].decisionModel), [false, false]);
+test('a claim holds once one cited source states it; one no source states fails, its note naming the claim and the source', async (t) => {
+  const report = '## Summary\nx\n## Assumptions\nNone.\n## Findings\n- Ducks fly far. They rest on lakes. [s1][s2]\n';
+  const models = createModels();
+  const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  models.setProvider(judge.provider);
+  const clef = await fakeClef(t, (q) => (q.includes('finding-1.1 ~ s2') ? 'states' : q.includes('finding-1.2 ~ s1') ? 'contradicts' : 'silent'));
+  models.setProvider(clef.provider);
+  let verdict: Verdict | undefined;
+  await replayJudge({
+    cases: [{ case: 'ducks', kind: 'research.report', content: report, inputs: inputsOf(report, new Map([['s1', 'Ducks fly far.'], ['s2', 'Ducks fly far and rest on lakes.']])) }],
+    arms: [{ label: 'clef', adapters: manifest.evalAdapters!, rejudge: async (...a) => (verdict = await rejudge(...a)), decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
+    repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
+  });
+  const check = verdict!.checks.find((k) => k.id === 'supported_by_source')!;
+  assert.deepEqual([check.met, check.groups, check.resolvers], [0.5, 2, { clef: 4 }], 'Clef settled all four items, so nothing escalated');
+  assert.deepEqual(check.marks, ['finding-1.2']);
+  assert.match(check.notes[0], /^finding-1\.2: source finding-1\.2 ~ s1: flagged by clef \(no reason given\): "They rest on lakes\."/);
+  assert.equal(clef.requests.length, 1, 'the finding\'s four items packed into one request');
+});
+
+test('the web reads every judged item\'s claim back from the report by its name, a cited paragraph above a list included', () => {
+  const above = '## Findings\nLater paragraph [s21].\n- Covered by the paragraph above.\n\nA-MAC scores: [s16]\n- Utility: rated.\n- **Lead:**\n  - Nested one [s3]. Two.\n';
+  const reports = [above, ...readdirSync(new URL('./fixtures/reports/', import.meta.url)).map((n) => readFileSync(new URL(`./fixtures/reports/${n}`, import.meta.url), 'utf8'))];
+  for (const md of reports) {
+    const units = buildEvidence(reportDeclaration, inputsOf(md, new Map(citedIds(md).map((id) => [id, 'page'])))).evidence.source;
+    for (const u of units) {
+      const [, n, k] = /^source finding-(\d+)\.(\d+) ~ s\d+$/.exec(u.id)!;
+      assert.equal(claimOf(md, Number(n), Number(k)), u.state.claim, u.id);
+    }
+  }
+  assert.equal(claimOf(above, 1, 1), 'Later paragraph.');
+  assert.equal(claimOf(above, 1, 2), 'Covered by the paragraph above.');
+});
+
+test('every item of the fixture reports fits Clef\'s window, even when each cited page is long and on topic', () => {
+  const asks = Object.entries(reportDeclaration.checks).map(([id, d]) => ({ id: `claims_grounded.${id}`, question: d.question }));
+  for (const name of readdirSync(new URL('./fixtures/reports/', import.meta.url))) {
+    const md = readFileSync(new URL(`./fixtures/reports/${name}`, import.meta.url), 'utf8');
+    const page = md.repeat(Math.ceil(200_000 / md.length));
+    const units = buildEvidence(reportDeclaration, inputsOf(md, new Map(citedIds(md).map((id) => [id, page])))).evidence.source;
+    const over = units.filter((u) => decisionModelTokens(u, asks) >= 8192).map((u) => u.id);
+    assert.deepEqual(over, [], name);
+  }
 });
 
 const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';
@@ -553,7 +587,7 @@ test('a report with a real quote passes all gates; an invented quote and a bare 
   const good = await verdictOf(GOOD);
   assert.equal((good.verdict as any).passed, true);
   const units = Object.fromEntries((good.verdict as any).checks.map((c: any) => [c.id, c.units]));
-  assert.deepEqual([units.supported_by_source, units.contradicted_by_source], [2, 2], 'each finding reached the judge');
+  assert.equal(units.supported_by_source, 2, 'each finding\'s one claim reached the judge');
 
   const badContent = GOOD.replace('Ducks are birds. [s1]', 'Ducks swim.').replace('"Ducks & geese fly."', '"Geese never fly south"');
   const bad = await verdictOf(badContent);

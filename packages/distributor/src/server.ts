@@ -142,6 +142,22 @@ type SessionAuth = { sessionOf(token: string): string | undefined; crossSession(
 // The Sessions API's caller: the catalog's Principal names a person by id, the session's by name.
 const callerOf = (who: Principal): Caller => (who.kind === 'person' ? { kind: 'person', id: who.name } : who);
 
+const build = () => ({ commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null });
+
+// A map whose changed entries are announced; a value set again unchanged announces nothing.
+function announced<V>(announce: (key: string) => void): Map<string, V> {
+  const map = new Map<string, V>();
+  return Object.assign(map, {
+    set: (key: string, value: V) => {
+      const same = JSON.stringify(map.get(key)) === JSON.stringify(value);
+      Map.prototype.set.call(map, key, value);
+      if (!same) announce(key);
+      return map;
+    },
+    delete: (key: string) => Map.prototype.delete.call(map, key) && (announce(key), true),
+  });
+}
+
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; waiting?: ModelWait | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
@@ -157,10 +173,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const removing = new Map<string, Promise<void>>();
   // Requests per key past that wait: one may be starting or calling the process, so a delete is refused until it ends.
   const serving = new Map<string, number>();
-  // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
-  const active = new Map<string, boolean>();
   // Each running session's wait for a model slot as of its last sweep, overlaid on its Sessions API row.
-  const waits = new Map<string, ModelWait>();
+  const waits = announced<ModelWait>((key) => opts.catalog?.changed(key));
   const wakeTimers = new Map<string, () => void>();
   // Sessions whose busy marker (a wake time of "now") is on disk; written by the sweep so a crash still restarts them.
   const marked = new Set<string>();
@@ -228,7 +242,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
   async function stopSession(key: string, at: number | undefined) {
-    active.delete(key);
     waits.delete(key);
     marked.delete(key);
     wakeFailures.delete(key);
@@ -262,10 +275,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     for (const key of waits.keys()) if (!running.includes(key)) waits.delete(key);
     for (const key of running) {
       try {
-        const { status, wake, waitingOnHuman, waiting } = await ping(key);
+        const { status, wake, waiting } = await ping(key);
         if (waiting) waits.set(key, waiting);
         else waits.delete(key);
-        active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
         await mark(key, status === 'HealthyBusy', wake?.at);
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
@@ -292,9 +304,10 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     const wakeFor = (p: Ping) => (p.status === 'HealthyBusy' ? now() : p.wake?.at);
     // A session that cannot answer keeps the marker its last sweep wrote.
     await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => (marked.has(key) ? now() : undefined)))));
+    api?.stop();
   }
 
-  // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
+  // Only the eval driver calls /approvals, but reading them must not keep a session warm or start an idle one;
   // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
     if ((await driver.agentOf(key)) === undefined) return sendProblem(res, 404, 'no such session');
@@ -361,7 +374,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const { pathname } = new URL(req.url ?? '', 'http://distributor');
     if (req.method !== 'GET' || !['/agents', '/version'].includes(pathname)) return false;
-    if (pathname === '/version') send(res, 200, { commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null });
+    if (pathname === '/version') send(res, 200, build());
     else send(res, 200, { agents: await driver.agents() });
     return true;
   }
@@ -413,7 +426,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     wakeFailures.delete(key);
     if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
-    active.delete(key);
     waits.delete(key);
     console.log(`session ${key} deleted`);
     return 'deleted';
@@ -446,7 +458,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     });
     return out;
   }
-  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer, waiting: (key) => waits.get(key) });
+  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer, waiting: (key) => waits.get(key), build, setTimer });
 
   // A submission naming another agent changes the session's role if no run is active; an open run, a pending approval or a sleep is still a run.
   // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.

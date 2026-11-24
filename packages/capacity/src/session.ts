@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 import { appEndpoint, gateGenerations, modelWait, onRunEnded, onWaiting } from '@quack/sdk';
-import { CapacityGate, httpClient, type GateOptions, type GatedCall } from './gate.ts';
+import { CapacityGate, httpClient, type GatedCall } from './gate.ts';
 
-export type CapacityConfig = Partial<Pick<GateOptions, 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
+export type CapacityConfig = { serviceUrl?: string; serviceToken?: string; holder?: string };
 
 /** The deployment's gate: installed for every session the runtime primed with a distributor to reach, otherwise nothing. */
 export function capacityFromEnv(env: Record<string, string | undefined> = process.env) {

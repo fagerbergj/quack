@@ -296,6 +296,11 @@ test('an excerpt is sent once when the full path a finding cites and the short p
   assert.deepEqual(built.evidence.citation.map((u) => (u.state.excerpt as { cite: string }).cite), [`${full}:5`]);
 });
 
+test('a case built before the citations input existed has no citation items instead of throwing', () => {
+  const decl = { scopes: { citation: reviewDeclaration.scopes.citation }, checks: {} };
+  for (const inputs of [{} as Record<string, string>, { citations: '' }]) assert.deepEqual(buildEvidence(decl, inputs).evidence.citation, []);
+});
+
 test('a Verified item names its source when it shows a command, file:line, CI check, commit or URL; an absence claim needs its search', async () => {
   // The 77 Verified items of the replay set (14 recorded reviews and a re-review), each label checked by hand; a bare
   // "ran"/"read" names no source for code, so those items are asked of Clef.

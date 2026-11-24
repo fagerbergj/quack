@@ -2,7 +2,7 @@ import type { Extension } from '../extension.ts';
 import { contracts } from './contracts/index.ts';
 import { github } from './github.ts';
 import { remarkable } from './remarkable/index.ts';
-import { research } from './research.ts';
+import { research } from './research.tsx';
 import { schedules } from './schedules/index.ts';
 import { sleeper } from './sleeper/index.ts';
 import { subagent } from './subagent.tsx';

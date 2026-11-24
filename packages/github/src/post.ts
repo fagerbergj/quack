@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, LiveDoc, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { feedback, judged, type Verdict } from '@quack/judge';
-import { Artifacts, artifactsExtension, attachLink, gate, sealedVersion, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { Artifacts, artifactsExtension, attachLink, gate, sealedVersion, sealedVersions, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
 import { parseReview, reviewInputs, reviewKind } from './review.ts';
@@ -68,7 +68,7 @@ const linkHook = () => {
       const current = String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
       if (current !== run) [run, retries] = [current, 0];
       const text = answer.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n');
-      const versions = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions ?? [];
+      const versions = sealedVersions(await api.snapshot(Artifacts, api.conversationId, ctx), reviewKind.kind);
       const posted = [...new Set(versions.flatMap((v) => v.links?.map((l) => l.url) ?? []))];
       const made = [...new Set(text.match(REVIEW_LINK))].filter((url) => !posted.includes(canonicalLink(url)));
       if (!made.length || retries >= MAX_LINK_RETRIES) return undefined;

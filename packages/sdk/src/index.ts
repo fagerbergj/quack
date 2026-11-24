@@ -3,9 +3,9 @@ export { answerQuestion, closeQuestions, pendingQuestions, person, Questions, ty
 export { principalName, type Principal } from './principal.ts';
 export { failedRows, Failures, type FailureRow } from './failures.ts';
 export { agentModel, decide, modelResolver, parseDecision, prompt, sessionModel, type Decision, type DecisionPoint, type Resolver } from './decide.ts';
-export { artifactKind, Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedVersion, SUMMARY_MAX, summaryOf, unsubmitted, type ArtifactKind, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
+export { artifactKind, Artifacts, artifactsExtension, attachLink, attachVerdict, latestSealed, seal, sealedVersion, sealedVersions, SUMMARY_MAX, summaryOf, unsubmitted, type ArtifactKind, type ArtifactsView, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
 export { gate, SealRefused, type GateEvent, type GatePoint, type GateVerdict, type ProcessorContext } from './gates.ts';
-export { inputTooLarge, MODEL_RETRY, retryModelCall, retryEngineBusy, type RetrySeams } from './model-retry.ts';
+export { inputTooLarge, MODEL_RETRY, retryModelCall, retryEngineBusy, transientModelError, type RetrySeams } from './model-retry.ts';
 export { gateGenerations, inSessionSlot, observeGeneration, onGeneration, onRunEnded, onWaiting, runEnded, modelWait, whileWaiting, type Generation, type GenerationGate, type GenerationRequest, type ModelWait } from './signals.ts';
 export type { App, AppContext, PageRoute, Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, Dispatch, DispatchingExtension, Resume, SubmitResult, EvalAdapter, EvalService, ExtensionManifest, LoopEvent, ProxiedService, RecordedSession, RunEnded } from './manifest.ts';
 export { appEndpoint, primeSessionEndpoint, invocationRequest, methodNotAllowed, safeDecode, safeEqual, sendProblem, serviceHttp, inProcessFetch, serveApp, submitToSession, tooLarge, type SessionSubmission } from './http.ts';

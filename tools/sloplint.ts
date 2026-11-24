@@ -1,10 +1,12 @@
-// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines.
+// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines, and new import cycles and tangles.
 // Usage: node tools/sloplint.ts diff <git-ref> | repo
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
+import { baseSources, cycleFindings } from './cycles.ts';
 import { clones, MIN_TOKENS } from './dupl.ts';
+import { tangleFindings } from './tangles.ts';
 
 export const MAX_COMMENT_RUN = 2;
 export const MAX_CC = 15;
@@ -138,6 +140,8 @@ function run(mode: string, ref: string | undefined): number {
   const files = new Map([...touched].filter(([f]) => tree.has(f)));
   const findings = [...files].flatMap(([rel, rs]) => lintSource(rel, tree.get(rel)!, rs).map((f) => ({ rel, ...f })));
   for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${relative(process.cwd(), join(root, c.other))}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
+  const base = mode === 'repo' ? { sources: new Map<string, string>(), moved: new Map<string, string>() } : baseSources(root, ref!, tree, linted);
+  for (const c of [...cycleFindings(base, tree), ...tangleFindings(base, tree)]) findings.push({ rel: c.file, line: c.line, message: c.message });
   for (const f of findings) console.log(`${relative(process.cwd(), join(root, f.rel))}:${f.line}: ${f.message}`);
   if (findings.length === 0) console.log('sloplint: ok');
   return mode === 'repo' ? 0 : Math.min(findings.length, 1);
