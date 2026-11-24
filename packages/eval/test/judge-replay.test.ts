@@ -9,7 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
-import { PASS_ONLY, type Declaration, type Rubric } from '@quack/judge';
+import { PASS_ONLY, type CheckDecl, type Declaration, type Rubric } from '@quack/judge';
+import { outcomes } from '../src/decision-only.ts';
+import { tally } from '../src/escalation-report.ts';
 import type { EvalAdapter } from '@quack/sdk';
 import { armAt, budget, countsOf, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
@@ -396,4 +398,16 @@ test('a decision-only round Clef never answers marks its items outage and fails 
   await assert.rejects(replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note: notes('x', 'y') } }], arms: [{ label: 'base', adapters: [oneCheck('share')], decisionModel: clefRef() }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true, onRows: (rows) => written.push(...rows) }), /base a: the decision model answered no request for 2 units \(an outage\)/);
   assert.deepEqual(written.map((r) => [r.outage, r.verdict, r.items]), [[2, 'open', { 'note x': 'outage', 'note y': 'outage' }]]);
   assert.deepEqual(asked, [], 'no judge-model request');
+});
+
+test('a check claims only its own scope\'s unanswered units as outage, however many checks read the failed scope', () => {
+  const s = { api: undefined as never, probabilities: new Map([['a x\tq', 0.95]]), escalated: new Set<string>(), down: () => new Set(['b y']) };
+  const decl = (scope: string) => ({ scope }) as CheckDecl;
+  assert.deepEqual(outcomes(s, 'q', decl('a'), 0.9), { 'a x': 'pass' });
+  assert.deepEqual(outcomes(s, 'r', decl('b'), 0.9), { 'b y': 'outage' });
+  assert.deepEqual(outcomes(s, 'r', decl('bb'), 0.9), {});
+});
+
+test('the report tallies its rated lines by mark', () => {
+  assert.equal(tally(['UNHEALTHY 20% 2/10 b y', 'ok         10% 1/10 a x', 'no-clef   100% 1/1 x export', 'ok          0% 0/5 c z']), '1 UNHEALTHY, 1 no-clef, 2 ok, 0 declared, 0 not-asked');
 });

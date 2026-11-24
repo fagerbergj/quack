@@ -102,6 +102,8 @@ function outcomeOf(s: DecisionOnly, unit: string, key: string, d: CheckDecl | un
 export function outcomes(s: DecisionOnly, ask: string, d: CheckDecl | undefined, act: number): Record<string, Outcome> {
   const units = [...s.probabilities.keys(), ...s.escalated].filter((k) => k.endsWith(`\t${ask}`)).map((k) => k.slice(0, -ask.length - 1));
   // An unreachable decision model leaves its items undecided, never escalated, so only the request log names them.
-  if (d?.decisionModel !== false) units.push(...s.down());
+  // down() spans every scope the round asked; a check may only claim the units of its own scope.
+  const inScope = (u: string) => d === undefined || u === d.scope || u.startsWith(`${d.scope} `);
+  if (d?.decisionModel !== false) units.push(...[...s.down()].filter(inScope));
   return Object.fromEntries([...new Set(units)].sort().map((u) => [u, outcomeOf(s, u, itemKey(u, ask), d, act)]));
 }

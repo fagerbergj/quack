@@ -28,6 +28,12 @@ function readExport(dir: string, f: string): Exported[] {
   return [];
 }
 
+/** The split of rated lines by mark, so no reader counts them by hand. */
+export function tally(lines: string[]): string {
+  const n = (m: string) => lines.filter((l) => l.startsWith(m)).length;
+  return `${n('UNHEALTHY')} UNHEALTHY, ${n('no-clef')} no-clef, ${n('ok')} ok, ${n('declared')} declared, ${n('not-asked')} not-asked`;
+}
+
 if (import.meta.main) {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { 'decision-model': { type: 'string', default: 'clef' }, since: { type: 'string', default: '0' } } });
   const [dir] = positionals;
@@ -35,7 +41,7 @@ if (import.meta.main) {
   const exports = readdirSync(dir).filter((f) => f.endsWith('.json')).flatMap((f) => readExport(dir, f));
   const counts = countsOf(exports, values['decision-model'], Number(values.since));
   const { lines, unhealthy } = budget(counts);
-  console.log([`escalation budget from ${exports.length} exports, ${counts.length} verdict checks sealed since ${values.since} (escalated / asked per rubric and check):`, ...lines].join('\n'));
+  console.log([`escalation budget from ${exports.length} exports, ${counts.length} verdict checks sealed since ${values.since} (escalated / asked per rubric and check):`, ...lines, tally(lines)].join('\n'));
   // Reading nothing is a failure, not a clean bill.
   process.exitCode = unhealthy || !counts.length ? 1 : 0;
 }
