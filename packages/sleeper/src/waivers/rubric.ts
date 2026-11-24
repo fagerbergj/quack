@@ -24,7 +24,7 @@ function cheapest(f: WaiverFacts, drop: Mine): boolean {
 function ladderFlaw(f: WaiverFacts, r: Candidate): string | null {
   const drop = f.roster[r.drop.player.id];
   const add = f.free[r.player.id];
-  if (drop.role === 'ir') return `${drop.name} is on IR, which takes no bench spot, so dropping him makes no room`;
+  if (drop.role === 'ir') return `${drop.pos} ${drop.name} is on IR, which takes no bench spot, so dropping him makes no room`;
   const dv = overReplacement(f, drop);
   if (STREAMED.has(drop.pos) || dv === null) return null;
   const what = `${drop.pos} ${drop.name} (${above(dv, drop.pos)})`;
@@ -38,7 +38,7 @@ function ladderFlaw(f: WaiverFacts, r: Candidate): string | null {
   return `${what} is worth more over replacement than ${add.pos} ${add.name} (${above(av, add.pos)})`;
 }
 
-// A K or DEF may cost a skill player only into this week's empty slot and only the cheapest one; a skill swap compares value over replacement. No figure, no comparison.
+// An IR player is never a drop, whatever his position or figure. A K or DEF may cost a skill player only into this week's empty slot and only the cheapest one; a skill swap compares value over replacement. No figure, no comparison.
 function dropLadder(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf<WaiverFacts>(ev);
   const rows = parse(artifact).candidates;

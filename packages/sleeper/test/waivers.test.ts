@@ -163,7 +163,7 @@ test('drop_ladder passes a dearer skill drop that is the bench player least over
   assert.equal(r.detail, 'the drop is out of order: RB Dan Dash (0.6 above the best free RB) is worth more over replacement than TE Tim Tight (0 above the best free TE)');
 });
 
-test('a drop who is Out or on IR is worth his week, not his season rate, so the gate does not block dropping him', () => {
+test('a drop who is Out or on IR is worth his week, not his season rate, so he is never compared on his season rate', () => {
   const rb = { id: '1', name: 'Ray Rush', pos: 'RB', team: 'SF', proj: 0, bye: 14, ppg: 20.6 };
   assert.equal(worth({ ...rb, inj: 'IR' } as never), null);
   assert.equal(worth({ ...rb, inj: 'Out', proj: 3 } as never), 3);
@@ -223,9 +223,15 @@ test('drop_ladder passes a kicker into this week\'s empty slot for the spare pla
 });
 
 test('drop_ladder fails any drop of a player in an IR slot, which holds a free slot and makes no room', async () => {
-  const tyson = 'Jordyn Tyson is on IR, which takes no bench spot, so dropping him makes no room';
+  const tyson = 'WR Jordyn Tyson is on IR, which takes no bench spot, so dropping him makes no room';
   assert.deepEqual(await ladder(real.week9, [['Tyler Bass', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}${tyson}` });
   assert.deepEqual(await ladder(real.week9, [['Drew Stevens', 'Jordyn Tyson'], ['Tyler Bass', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}${tyson}; ${tyson}` });
+});
+
+test('drop_ladder fails dropping a kicker held in an IR slot too', async () => {
+  const f = real.week9;
+  const kicker = { ...f, roster: { ...f.roster, [idOf(f, 'Jordyn Tyson')]: { ...f.roster[idOf(f, 'Jordyn Tyson')], pos: 'K' } } };
+  assert.deepEqual(await ladder(kicker, [['Tyler Bass', 'Jordyn Tyson']]), { met: 0, detail: `${OUT}K Jordyn Tyson is on IR, which takes no bench spot, so dropping him makes no room` });
 });
 
 test('a K or DEF bye is a hole only this week; a skill-position bye counts inside the lead time', () => {
