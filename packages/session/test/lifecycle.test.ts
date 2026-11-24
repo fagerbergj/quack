@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
-import { Approvals, EVENT_MAX_BYTES, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
+import { Approvals, EVENT_MAX_BYTES, Questions, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
 import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -110,6 +110,17 @@ test('a flush withdraws an approval whose call ended, and the catalog cancels it
   await h.sender.flush();
   assert.deepEqual([(await h.catalog.getAsk(KEY, 'orphan'))?.state, (await h.catalog.getSession(KEY))?.pendingAsks], ['cancelled', 0]);
   assert.equal((await h.session.harness.snapshot(Approvals, h.session.root.id, ctx))!.items.orphan!.withdrawn?.reason, 'task_ended');
+});
+
+test('a question committed with no run event reaches the catalog without a timer firing', async () => {
+  const h = await harness();
+  await h.session.root.commit(async (tx) => { (await tx.doc(Questions, h.session.root.id)).items.q1 = { question: 'Which?', options: ['x'], evidence: null, askedAt: 5, answer: null, closed: false }; }, ctx);
+  // Only yields: nothing here calls flush() or fires a timer, so the watch alone must deliver it.
+  for (let i = 0; i < 50 && !(await h.catalog.getAsk(KEY, 'q1')); i++) await new Promise((r) => setImmediate(r));
+  assert.equal((await h.catalog.getAsk(KEY, 'q1'))?.state, 'pending');
+  const acked = (await h.stream())!.acked;
+  await h.sender.flush();
+  assert.equal((await h.stream())!.acked, acked, 'an unchanged question set sends nothing');
 });
 
 test('a home: conversation is never titled from its first message', async () => {

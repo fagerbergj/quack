@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Conversation, ConversationId, ConversationView, Harness, TaskGraph } from '@earendil-works/pi-durable';
-import { Approvals, Failures, failedRows, onGeneration, runEnded } from '@quack/sdk';
+import { Approvals, Failures, failedRows, onGeneration, Questions, runEnded } from '@quack/sdk';
 import { append, LifecycleStream, openRun, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -36,7 +36,7 @@ export type SenderOptions = {
   /** Runs before each derivation, so a withdrawal it writes (of approvals whose call ended) goes out in the same flush. */
   sweep?: () => Promise<void>;
   fetch?: typeof fetch; setTimer?: SetTimer; now?: () => number; log?: (line: string) => void;
-  retryMs?: number; pollMs?: number;
+  retryMs?: number;
 };
 
 const bytes = (s: string) => Buffer.byteLength(s);
@@ -206,20 +206,19 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     await settle();
   });
   await flush();
-  // A workflow's questions are committed without any run event, so nothing else would announce them.
-  let cancelPoll = () => {};
-  const poll = () => { cancelPoll = setTimer(() => { void flush().catch(() => {}).finally(() => !stopped && poll()); }, opts.pollMs ?? 10_000); };
-  poll();
+  // A workflow's questions are committed without any run event, so their document is watched; watchDoc does not create it.
+  await root.commit(async (tx) => { await tx.doc(Questions, root.id); }, ctx);
+  const questions = await harness.watchDoc(Questions, root.id, ctx);
+  questions?.start(async () => { await flush().catch(() => {}); });
 
   // Waits out an in-flight send (bounded) so its ack commit cannot race session.close().
   async function stop() {
     stopped = true;
     unhear();
     await spending;
-    cancelPoll();
     cancelRetry?.();
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimer(() => r(undefined), STOP_WAIT_MS))]);
-    await Promise.all([watch.stop(), graph.stop()]);
+    await Promise.all([watch.stop(), graph.stop(), questions?.stop()]);
   }
   return { flush, stop };
 }
