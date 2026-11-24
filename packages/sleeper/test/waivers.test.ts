@@ -330,7 +330,7 @@ test('the workflow seals a rolling-league card and the judge passes it, with no 
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@9', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@10', [], true]);
   assert.deepEqual(verdict.checks.filter((k) => k.id === 'close_call_news').map((k) => [k.units, k.met]), [[0, null]]);
   assert.ok(judged.some((q) => /role and usage/.test(q)) && !judged.some((q) => /close top claim or drop/.test(q)));
 });
@@ -339,7 +339,7 @@ test('the workflow seals a FAAB card with its bids, and with a news source the c
   const { sealed, verdict, judged, record } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(faab, async () => [item]), sealed.content), 'the recording rebuilds the inputs the judge read');
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@9', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@10', [], true]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });
