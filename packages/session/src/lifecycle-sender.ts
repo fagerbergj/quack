@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Conversation, ConversationId, ConversationView, Harness, TaskGraph } from '@earendil-works/pi-durable';
-import { Approvals, Failures, failedRows, onGeneration, Questions, runEnded } from '@quack/sdk';
+import { Approvals, Artifacts, Failures, failedRows, onGeneration, Questions, runEnded } from '@quack/sdk';
 import { append, LifecycleStream, openRun, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -118,7 +118,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
         continue;
       }
       failures = 0;
-      // An ack that does not move is a refusal the catalog holds (spend going backwards, a tombstoned key): wait for news.
+      // An ack that does not move is a refusal the catalog holds (spend going backwards, a tombstoned key): wait for a view, task-graph or watched-document change.
       if (out.acked === doc!.acked) return;
       await commit(async (tx) => { (await tx.doc(LifecycleStream, root.id)).acked = out.acked; });
     }
@@ -205,11 +205,12 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     tasked = !tasked;
     await settle();
   });
+  // These documents change with no run event (a workflow's question, a verdict with no run waiting, an artifact a background task sealed),
+  // so each is watched, before the startup flush reads it; watchDoc does not create a document.
+  await root.commit(async (tx) => { await tx.doc(Questions, root.id); await tx.doc(Approvals, root.id); await tx.doc(Artifacts, root.id); }, ctx);
+  const docs = await Promise.all([harness.watchDoc(Questions, root.id, ctx), harness.watchDoc(Approvals, root.id, ctx), harness.watchDoc(Artifacts, root.id, ctx)]);
+  for (const doc of docs) doc?.start(async () => { await flush().catch(() => {}); });
   await flush();
-  // A workflow's questions are committed without any run event, so their document is watched; watchDoc does not create it.
-  await root.commit(async (tx) => { await tx.doc(Questions, root.id); }, ctx);
-  const questions = await harness.watchDoc(Questions, root.id, ctx);
-  questions?.start(async () => { await flush().catch(() => {}); });
 
   // Waits out an in-flight send (bounded) so its ack commit cannot race session.close().
   async function stop() {
@@ -218,7 +219,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     await spending;
     cancelRetry?.();
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimer(() => r(undefined), STOP_WAIT_MS))]);
-    await Promise.all([watch.stop(), graph.stop(), questions?.stop()]);
+    await Promise.all([watch.stop(), graph.stop(), ...docs.map((d) => d?.stop())]);
   }
   return { flush, stop };
 }

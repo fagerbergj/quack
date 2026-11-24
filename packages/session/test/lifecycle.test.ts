@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
-import { Approvals, EVENT_MAX_BYTES, Questions, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
+import { Approvals, Artifacts, EVENT_MAX_BYTES, Questions, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
 import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -63,7 +63,7 @@ test('an over-cap run end is cut with a marker until it fits; other events are l
   assert.ok(data.lastMessage.endsWith(' … [truncated]') || data.failedSteps[0]!.error.endsWith(' … [truncated]'));
 });
 
-type Setup = { responses?: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0]; extensions?: Extension[]; now?: () => Date };
+type Setup = { hold?: Promise<void>; responses?: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0]; extensions?: Extension[]; now?: () => Date };
 
 async function harness(key = KEY, setup: Setup = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-lifecycle-'));
@@ -83,7 +83,19 @@ async function harness(key = KEY, setup: Setup = {}) {
   // The channel as the distributor serves it, behind a switch that plays the distributor's outages.
   const gate = { mode: 'up' as 'up' | 'down' | 'unauthorized' | 'small', posts: [] as string[] };
   const served = inProcessFetch(async (req, res) => void ((await route(req, res, key)) || res.writeHead(404).end()));
+  // Delivery is observable without a wall-clock wait: `arrived` is the first POST starting, `nextPost()` the next one served.
+  let arrive = () => {};
+  const arrived = new Promise<void>((r) => { arrive = r; });
+  const served$: Array<() => void> = [];
+  const nextPost = () => new Promise<void>((r) => served$.push(r));
   const fetcher: typeof fetch = async (url, init) => {
+    arrive();
+    await setup.hold;
+    const res = await send(url, init);
+    served$.splice(0).forEach((r) => r());
+    return res;
+  };
+  const send: typeof fetch = async (url, init) => {
     gate.posts.push(String(init?.body));
     if (gate.mode === 'down') return new Response('{}', { status: 503 });
     if (gate.mode === 'unauthorized') return new Response('{"detail":"revoked"}', { status: 401 });
@@ -92,15 +104,16 @@ async function harness(key = KEY, setup: Setup = {}) {
   };
   const timers: Array<() => void> = [];
   const fire = () => timers.splice(0).forEach((fn) => fn());
-  const sender = await startLifecycleSender(session, {
+  const starting = startLifecycleSender(session, {
     url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: (fn) => (timers.push(fn), () => {}),
     lastMessage: async () => (await session.messages(4)).filter((x) => x.role === 'assistant').at(-1)?.text, ...(setup.now && { now: () => +setup.now!() }), sweep: session.withdrawEnded,
   });
-  cleanups.push(async () => { await sender.stop(); await session.close(); await store.close(); });
+  const sender = setup.hold ? (undefined as never) : await starting;
+  cleanups.push(async () => { await (await starting).stop(); await session.close(); await store.close(); });
   const stream = () => session.harness.snapshot(LifecycleStream, session.root.id, ctx);
   // Settles the sender's watch-driven flushes without a wall-clock wait.
   const settle = async () => { for (let i = 0; i < 50; i++) { await sender.flush(); await new Promise((r) => setImmediate(r)); } };
-  return { dir, session, catalog, store, gate, fire, timers, sender, stream, settle, restart: () => startLifecycleSender(session, { url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {} }) };
+  return { dir, session, catalog, store, gate, fire, timers, sender, starting, arrived, nextPost, stream, settle, restart: () => startLifecycleSender(session, { url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {} }) };
 }
 
 // What a rerun that failed before its gate leaves: a pending row whose task is gone. The next flush withdraws and cancels it.
@@ -112,15 +125,54 @@ test('a flush withdraws an approval whose call ended, and the catalog cancels it
   assert.equal((await h.session.harness.snapshot(Approvals, h.session.root.id, ctx))!.items.orphan!.withdrawn?.reason, 'task_ended');
 });
 
-test('a question committed with no run event reaches the catalog without a timer firing', async () => {
+const question = { question: 'Which?', options: ['x'], evidence: null, askedAt: 5, answer: null, closed: false };
+const commitQuestions = (h: Awaited<ReturnType<typeof harness>>, fn: (items: Record<string, typeof question | any>) => void) => h.session.root.commit(async (tx) => fn((await tx.doc(Questions, h.session.root.id)).items), ctx);
+
+test('a question and its answer committed with no run event reach the catalog without a timer firing', async () => {
   const h = await harness();
-  await h.session.root.commit(async (tx) => { (await tx.doc(Questions, h.session.root.id)).items.q1 = { question: 'Which?', options: ['x'], evidence: null, askedAt: 5, answer: null, closed: false }; }, ctx);
-  // Only yields: nothing here calls flush() or fires a timer, so the watch alone must deliver it.
-  for (let i = 0; i < 50 && !(await h.catalog.getAsk(KEY, 'q1')); i++) await new Promise((r) => setImmediate(r));
+  const posted = h.nextPost();
+  await commitQuestions(h, (items) => { items.q1 = question; });
+  await posted;
   assert.equal((await h.catalog.getAsk(KEY, 'q1'))?.state, 'pending');
-  const acked = (await h.stream())!.acked;
+  const answered = h.nextPost();
+  await commitQuestions(h, (items) => { items.q1.answer = { choice: 'x', by: { kind: 'person', name: 'jason' }, at: 6 }; });
+  await answered;
+  assert.equal((await h.catalog.getAsk(KEY, 'q1'))?.state, 'resolved');
+  assert.equal(h.timers.length, 0, 'the sender registers no poll');
+  await h.sender.flush(); // joins any ack commit still running; it sends nothing itself
+  const before = JSON.stringify(await h.stream());
   await h.sender.flush();
-  assert.equal((await h.stream())!.acked, acked, 'an unchanged question set sends nothing');
+  assert.equal(JSON.stringify(await h.stream()), before, 'an unchanged question set sends nothing');
+});
+
+test('a question committed while the startup flush is still sending is recorded', async () => {
+  let release = () => {};
+  const h = await harness(KEY, { hold: new Promise<void>((r) => { release = r; }) });
+  await h.arrived;
+  await commitQuestions(h, (items) => { items.q1 = question; });
+  release();
+  await h.starting;
+  assert.equal((await h.catalog.getAsk(KEY, 'q1'))?.state, 'pending');
+});
+
+test('a verdict recorded with no run waiting reaches the catalog without a flush', async () => {
+  const h = await harness();
+  const posted = h.nextPost();
+  const verdict = { decision: 'approve' as const, reason: null, by: { kind: 'person' as const, name: 'jason' }, at: 7 };
+  await h.session.root.commit(async (tx) => { (await tx.doc(Approvals, h.session.root.id)).items.a1 = { tool: 'merge', args: {}, requestedAt: 6, verdict, executing: false, done: true }; }, ctx);
+  await posted;
+  assert.equal((await h.catalog.getAsk(KEY, 'a1'))?.state, 'resolved');
+});
+
+test('an artifact sealed with no run event reaches the catalog without a flush', async () => {
+  const h = await harness();
+  const posted = h.nextPost();
+  await h.session.root.commit(async (tx) => { (await tx.doc(Artifacts, h.session.root.id)).kinds.review = { versions: [{ kind: 'review', version: 1, hash: 'h', content: 'c', sealedAt: 8, verdict: null }] }; }, ctx);
+  await posted;
+  await h.sender.flush();
+  const doc = (await h.stream())!;
+  assert.ok(doc.events.some((e) => e.type === 'artifact.sealed'));
+  assert.equal(doc.acked, doc.events.length);
 });
 
 test('a home: conversation is never titled from its first message', async () => {
