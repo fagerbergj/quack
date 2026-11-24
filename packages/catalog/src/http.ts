@@ -91,9 +91,11 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
+const modelName = (v: unknown) => typeof v === 'string' && v.length <= MODEL_MAX && /^[^/]+\/.+$/.test(v);
+
 function patchOf(b: Record<string, unknown>): { title?: string | null; state?: 'archived' | 'stopped'; model?: string | null } {
   const { title, state, model } = b;
-  if (model !== undefined && model !== null && !(typeof model === 'string' && /^[^/]+\/.+$/.test(model) && model.length <= MODEL_MAX)) throw new Problem(400, 'model must be "provider/model" or null');
+  if (model !== undefined && model !== null && !modelName(model)) throw new Problem(400, 'model must be "provider/model" or null');
   if (title !== undefined && (typeof title !== 'string' || title.length > TITLE_MAX)) throw new Problem(400, `title must be text of at most ${TITLE_MAX} characters`);
   if (state !== undefined && state !== 'archived' && state !== 'stopped') throw new Problem(422, 'state may be written only as archived or stopped');
   return { ...(title !== undefined && { title: (title as string).trim() || null }), ...(state !== undefined && { state }), ...(model !== undefined && { model: model as string | null }) };
