@@ -1,5 +1,5 @@
 // Each rubric check's escalation rate over the verdicts in a directory of catalog exports (`quack export <key> <dir>/<name>.json`):
-// escalated / (decision model + escalated) per rubric@version and check, over budget marked UNHEALTHY, which fails the command.
+// escalated / (decision model + escalated) per rubric@version and check; over budget is UNHEALTHY, and one Clef never settled is no-clef, listed apart.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
