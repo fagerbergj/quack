@@ -30,7 +30,7 @@ const deployment = await resolveDeployment(config, fetch, referencedProviders(de
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions, current);
 const { extensions } = definition;
 
-const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, key: env('QUACK_SESSION_KEY') });
+const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, outageHours: deployment.modelOutageHours, key: env('QUACK_SESSION_KEY') });
 // The lifecycle channel feeds the session catalog.
 const sender = launch
   ? await startLifecycleSender(session, {

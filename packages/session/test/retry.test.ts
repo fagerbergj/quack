@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, retryDelayMs, type FauxResponseStep } from '@earendil-works/pi-ai';
+import type { ConversationRetryPolicy } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { failedRows, Failures, retryEngineBusy } from '@quack/sdk';
-import { createSessionServer, MODEL_RETRY, openSession } from '../src/index.ts';
+import { createSessionServer, MODEL_OUTAGE_HOURS, openSession, outageRetry } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-retry-'));
 after(() => rm(root, { recursive: true, force: true }));
@@ -16,7 +17,7 @@ const fail = (message: string) => fauxAssistantMessage('', { stopReason: 'error'
 const bad502 = () => fail('502 peer proxy error: dial tcp 10.0.0.2:11436: connect: no route to host');
 const FAST = { baseDelayMs: 1, maxAgentDelayMs: 1 };
 
-async function open(name: string, steps: FauxResponseStep[], retry: Partial<typeof MODEL_RETRY> = FAST) {
+async function open(name: string, steps: FauxResponseStep[], retry: Partial<ConversationRetryPolicy> = FAST) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(steps);
   const models = createModels();
@@ -57,10 +58,12 @@ test('retries are bounded: an exhausted budget fails as model_error', async () =
   await session.close();
 });
 
-test('the production policy rides out about five minutes of outage', () => {
+test('the production policy waits out about six hours of outage, trying at least every five minutes', () => {
+  const policy = outageRetry();
   let total = 0;
-  for (let n = 1; n <= MODEL_RETRY.maxRetries; n++) total += retryDelayMs(MODEL_RETRY, n);
-  assert.ok(total >= 240_000 && total <= 360_000, `total backoff ${total}ms`);
+  for (let n = 1; n <= policy.maxRetries; n++) total += retryDelayMs(policy, n);
+  assert.ok(total >= MODEL_OUTAGE_HOURS * 3_600_000 && total <= MODEL_OUTAGE_HOURS * 3_600_000 + 300_000, `total backoff ${total}ms`);
+  assert.equal(retryDelayMs(policy, policy.maxRetries), 300_000);
 });
 
 test('a submission queued behind a failing run is run, not left queued', async () => {
@@ -92,7 +95,8 @@ test('a session in retry backoff reports its wake time, so the distributor can s
   const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const ping = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ping`).then((r) => r.json());
-  assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt } });
+  const waiting = { since: standing.waiting!.since, ahead: 0, provider: 'faux', error: bad502().errorMessage };
+  assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt }, waiting, note: `Waiting for faux to answer: ${waiting.error}` });
   await new Promise((r) => server.close(r));
   await session.close();
 });

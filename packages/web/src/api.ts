@@ -6,8 +6,8 @@ export type Spend = { cost: number; tokens: Tokens };
 /** Money as the Sessions API sends it: millionths of the unit as a decimal string. */
 export type Money = { currencyCode: string; amountMicros: string };
 export type Failure = { step: string; error: string };
-/** A running session queued for a model slot: when it began waiting (epoch ms) and how many are ahead. */
-export type ModelWait = { since: number; ahead: number; provider: string };
+/** A running session queued for a model slot: when it began waiting (epoch ms) and how many are ahead; with `error`, parked until its endpoint answers. */
+export type ModelWait = { since: number; ahead: number; provider: string; error?: string };
 export type SessionState = 'running' | 'idle' | 'stopped' | 'archived';
 /** A session row of the catalog; dates are RFC 3339. */
 export type Session = {

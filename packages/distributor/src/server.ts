@@ -242,7 +242,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
   async function stopSession(key: string, at: number | undefined) {
-    waits.delete(key);
+    // A run parked on a failing model endpoint stays "waiting" on its row while stopped until its next try.
+    if (at === undefined || !waits.get(key)?.error) waits.delete(key);
     marked.delete(key);
     wakeFailures.delete(key);
     const stop = driver.stop(key).finally(() => stopping.delete(key));
@@ -272,7 +273,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   async function sweepOnce() {
     const running = driver.running();
     // A process that exited without stopSession leaves its entry; a rerun of the key must not inherit it.
-    for (const key of waits.keys()) if (!running.includes(key)) waits.delete(key);
+    for (const key of waits.keys()) if (!running.includes(key) && !(wakeTimers.has(key) && waits.get(key)?.error)) waits.delete(key);
     for (const key of running) {
       try {
         const { status, wake, waiting } = await ping(key);

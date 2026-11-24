@@ -9,7 +9,7 @@ export type CeilingSink = {
   record(conversation: ConversationId, run: string, error: string | null): Promise<void>;
 };
 
-/** Counts every model response of a run; the response past `limit` fails the run, loudly and once. */
+/** Counts every model answer of a run; the answer past `limit` fails the run, loudly and once. A failed try is not a turn. */
 // Counts are in memory like the loop guard's: a restart only delays the stop.
 export const runCeilingExtension = (limit: number, sink: CeilingSink) => {
   const state = new Map<ConversationId, { run: string; turns: number }>();
@@ -17,7 +17,8 @@ export const runCeilingExtension = (limit: number, sink: CeilingSink) => {
     name: 'run-ceiling',
     hooks: [
       hook(GenerationTask, {
-        async afterResponse(_message, api, ctx) {
+        async afterResponse(message, api, ctx) {
+          if (message.stopReason === 'error') return;
           const run = String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
           let s = state.get(api.conversationId);
           if (s?.run !== run) {

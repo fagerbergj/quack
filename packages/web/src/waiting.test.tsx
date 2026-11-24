@@ -51,3 +51,15 @@ test('a double-check queued for a model slot keeps its check rows under "Waiting
   expect(within(screen.getByRole('list', { name: 'Checks running' })).getByText('A claim is not stated')).toBeInTheDocument();
   expect(screen.getByText(/^Done ·/)).toBeInTheDocument();
 });
+
+test('a run parked on a failing model endpoint reads "Waiting…", with the provider and its last error for assistive tech and the tooltip', async () => {
+  location.hash = '#/s/ui%3Au1';
+  render(<App />);
+  const ws = FakeSocket.all[0]!;
+  ws.open();
+  ws.frame(snapshot({ run: true }));
+  ws.frame({ type: 'waiting', waiting: { since: 60_000, ahead: 0, provider: 'local', error: '502 peer proxy error: connect: no route to host' } });
+  expect(screen.getByText('Waiting…')).toBeInTheDocument();
+  expect(screen.getByTitle('Waiting for local to answer · 502 peer proxy error: connect: no route to host')).toBeInTheDocument();
+  expect(screen.queryByText(/capacity/)).not.toBeInTheDocument();
+});

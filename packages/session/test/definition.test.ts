@@ -167,6 +167,11 @@ test('rejects an unknown deployment time zone', () => {
   assert.throws(() => parseDeployment({ ...deployment, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
 });
 
+test('takes a model outage window in hours, and refuses one that is not a bounded positive number', () => {
+  assert.equal(parseDeployment({ ...deployment, modelOutageHours: 0.5 }).modelOutageHours, 0.5);
+  for (const bad of [0, -1, Infinity, '6']) assert.throws(() => parseDeployment({ ...deployment, modelOutageHours: bad }), /modelOutageHours must be/);
+});
+
 test('collects the problems each selected extension reports for its own config', () => {
   const deployment = parseDeployment({ defaultModel: 'local/omni', providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512 } } } } });
   const entry = Object.assign(() => [], { validate: (config: unknown, d: unknown) => [`bad ${JSON.stringify(config)} ${Object.keys((d as typeof deployment).providers)}`] });

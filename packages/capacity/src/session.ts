@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
-import { appEndpoint, gateGenerations, modelWait, onRunEnded, onWaiting } from '@quack/sdk';
+import { appEndpoint, gateGenerations, modelWait, onRunEnded, onWaiting, transientModelError } from '@quack/sdk';
 import { CapacityGate, httpClient, type GatedCall } from './gate.ts';
 
 export type CapacityConfig = { serviceUrl?: string; serviceToken?: string; holder?: string };
@@ -50,10 +50,12 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
         else ctx.abortSignal?.addEventListener('abort', close, { once: true });
         return undefined;
       },
-      afterResponse: (_message, api) => {
+      afterResponse: (message, api) => {
         const call = calls.get(String(api.taskId));
         calls.delete(String(api.taskId));
         if (call) g.end(call);
+        // A failed try sleeps in its backoff, which can last hours on a dead endpoint: the slot goes back and the next try asks again.
+        if (transientModelError(message)) void g.idle();
       },
     })],
   })];

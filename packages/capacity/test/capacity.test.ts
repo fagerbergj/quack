@@ -832,7 +832,7 @@ test('a queued call claiming a spare lease marks it busy before releasing its ow
 });
 
 // A session with the gate and, unless `hear` is false, the lifecycle sender, which is what hears a run end.
-async function gatedSession(steps: FauxResponseStep[], limit = 1, hear = true) {
+async function gatedSession(steps: FauxResponseStep[], limit = 1, hear = true, retry: object = { enabled: false }) {
   const faux = fauxProvider({ models: [{ id: 'm' }] });
   faux.setResponses(steps);
   const models = createModels();
@@ -841,7 +841,7 @@ async function gatedSession(steps: FauxResponseStep[], limit = 1, hear = true) {
   table = new LeaseLedger({ dbPath: ':memory:', capacity: { [m.provider]: limit }, ttlMs: TTL, now: clock.now, setTimer: clock.setTimer });
   open.push(table);
   const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: capacitySessionExtensions({}, gate('s')) }, retry: { enabled: false } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: capacitySessionExtensions({}, gate('s')) }, retry });
   const sender = hear ? await startLifecycleSender(session, { url: 'http://d', token: 't', key: 'k', facts: async () => ({ agent: 'a', version: 1, createdAt: 0 }), fetch: async () => Response.json({ acked: 0 }), setTimer: () => () => {} }) : { stop: async () => {} };
   const close = async () => (await sender.stop(), await session.close(), await rm(dir, { recursive: true, force: true }));
   return { session, provider: m.provider, close };
@@ -866,6 +866,19 @@ test('a run that fails gives its slot to the waiter at once', async () => {
   fail();
   assert.ok(await within(5000, () => waiter.granted), 'granted on release, before the lease TTL');
   await close();
+});
+
+test('a run sleeping in its retry backoff after a failed try holds no slot', async () => {
+  const down = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '502 peer proxy error: dial tcp 10.0.0.2:11436: connect: no route to host' });
+  // The hour-long backoff's timer never fires here; the run only sleeps, as it would while its endpoint is dead.
+  const { session, close } = await gatedSession([down, fauxAssistantMessage('done')], 1, true, { baseDelayMs: 3_600_000, maxAgentDelayMs: 3_600_000 });
+  try {
+    void session.submit('go');
+    assert.ok(await within(5000, () => session.harness.wake().at !== undefined));
+    assert.ok(await within(5000, () => heldBy().length === 0), 'a dead endpoint must not pin the slot through the backoff');
+  } finally {
+    await close();
+  }
 });
 
 test('an aborted run (quack stop) gives its in-flight call\'s slot back at once', async () => {
