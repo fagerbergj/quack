@@ -80,9 +80,9 @@ test('findings must cite lines that exist', () => {
 const SHAPES = {
   'bare approve': { before: 10, applies: ['promises_handled', 'verified_names_evidence'] },
   'comment, no findings': { before: 7, applies: ['promises_handled', 'verified_names_evidence'] },
-  'findings, no blocker': { before: 16, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change'] },
-  'approve with findings': { before: 19, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change'] },
-  'blocking findings': { before: 21, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change', 'anchor_borne_out'] },
+  'findings, no blocker': { before: 16, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code'] },
+  'approve with findings': { before: 19, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code'] },
+  'blocking findings': { before: 21, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'anchor_borne_out'] },
 };
 
 test('no review shape may fall further short of full marks and still pass than it could at version 10', () => {
@@ -97,7 +97,7 @@ test('no review shape may fall further short of full marks and still pass than i
 test('a review with one of two findings contradicted by its citation scores no higher than it did at version 13', () => {
   const v13 = { ...reviewerRubric, version: 13, criteria: reviewerRubric.criteria.map((c) => ({ ...c, checks: c.checks.flatMap((k) => (k.id === 'matches_cited_code' ? [{ ...k, miss: undefined }, { id: 'contradicted', label: 'Cited code contradicts the finding', weight: -4 }] : [k])) })) };
   const result = (criterion: string, id: string, weight: number | 'gate', met: number): CheckResult => ({ criterion, id, label: id, weight, met, units: 2, resolvers: {}, notes: [] });
-  const base = (matches: number) => [result('claims_grounded', 'cites_existing_lines', 'gate', 1), result('structured_verdict', 'verdict_matches_labels', 'gate', 1), result('catches_real_issues', 'promises_handled', 3, 1), result('claims_grounded', 'verified_names_evidence', 2, 1), result('constructive_actionable', 'shows_proposed_change', 2, 1), result('claims_grounded', 'matches_cited_code', 3, matches)];
+  const base = (matches: number) => [result('claims_grounded', 'cites_existing_lines', 'gate', 1), result('structured_verdict', 'verdict_matches_labels', 'gate', 1), result('catches_real_issues', 'promises_handled', 3, 1), result('claims_grounded', 'verified_names_evidence', 2, 1), result('claims_grounded', 'matches_cited_code', 3, matches)];
   const before = score(v13, [...base(0.5), result('claims_grounded', 'contradicted', -4, 0.5)]);
   const after = score(reviewerRubric, base(0.5));
   assert.equal(before.passed, false);
@@ -115,7 +115,7 @@ test('each finding is an item with its cited code, sorted by label, all sharing 
   const built = await buildEvidence(reviewDeclaration, inputs);
   assert.deepEqual(built.evidence.blocking.map((u) => u.id), ['blocking 1']);
   assert.deepEqual(built.evidence.nonblocking.map((u) => u.id), ['nonblocking 2', 'nonblocking 3']);
-  assert.deepEqual(built.evidence.finding[0], { id: 'finding 1', state: { finding: { text: 'blocking (defect): internal/eval/replay.go:214 adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```', citedCode: '(the cited lines do not exist)' } }, shared: { ci: 'ci=success' } });
+  assert.deepEqual(built.evidence.blocking[0], { id: 'blocking 1', state: { finding: { text: 'blocking (defect): internal/eval/replay.go:214 adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```', citedCode: '(the cited lines do not exist)' } }, shared: { ci: 'ci=success' } });
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
 });
 
@@ -314,7 +314,7 @@ test('every model check is declared; a pitfall is asked as the defect and costs 
   }
   assert.ok(checks.some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
-  assert.equal(possible, 13);
+  assert.equal(possible, 11);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {
