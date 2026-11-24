@@ -59,10 +59,10 @@ export function App() {
   const hash = trimSlash(raw);
   const full = parseArtifactRoute(hash);
   const session = full ?? parseHash(hash);
-  useUpdates();
   const nav = full ? 'artifacts' : sessionRoute(session?.key) ?? navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
   const data = useWorkspaceData();
+  useUpdates(data.served);
   const desktop = useDesktop();
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
   const inSidebar = listInSidebar(desktop, nav, Boolean(session));

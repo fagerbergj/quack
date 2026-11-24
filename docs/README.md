@@ -109,6 +109,18 @@ A session runs on the copy it was pinned to, except its `model` and its judge se
 
 The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
 
+## Sessions API change stream
+
+`GET /sessions:watch` is a `text/event-stream` that says which sessions changed, so a client re-reads them through the list API instead of polling. It reads as `GET /sessions` does: a person or the tailnet, or a session credential with the cross-session grant (otherwise 404).
+
+- `event: hello` comes first, with the server's build as `GET /version` answers it: `{"commit": "...", "builtAt": "..."}`.
+- `event: changed` carries `{"keys": [...]}`, the keys of the sessions written since the last one. Writes within 250 ms of the first go out as one event.
+- `: keepalive` comments go out every 15 s, so the proxies in front keep an idle stream open.
+
+A change is any write the catalog commits (a lifecycle batch, a rename, archive, answer, stop or delete) and any change to a running session's `waiting`, which the distributor's sweep reads from the session. The stream subscribes before it answers, so a client that reads the list once the stream opens misses nothing. A client re-reads on every reconnect, since events sent while it was away are not replayed.
+
+The feed lives in the distributor's process, which is the catalog's only writer; several distributors on one Postgres would need LISTEN/NOTIFY.
+
 ## Checking a rollout
 
 Before `compose up` with a new image, run its validator against the prod config, agents and data volume, mounted read-only. It holds every bundle to the agent bundle contract below, then loads every bundle and every session's pinned `agent-def/agent.json` with the deployment-level extensions (unset extension env gets placeholders, nothing is contacted), prints `FAIL <path>: <error>` per failure and `N loaded, M failed`, and exits non-zero on any failure:
