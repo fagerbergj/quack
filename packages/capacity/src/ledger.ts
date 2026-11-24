@@ -9,10 +9,16 @@ export type LedgerConfig = {
   /** A holder or waiter not heard from within this long is gone. */
   ttlMs: number;
   now: () => number;
+  /** Times held acquires and wakes them at the next expiry; returns the cancel. */
+  setTimer: (fn: () => void, ms: number) => () => void;
 };
 
 // Grant waits kept per endpoint for the operate view; older ones are dropped as new ones land.
 const WAIT_HISTORY = 100;
+/** The longest an acquire is held; the client then asks again. */
+export const HOLD_MS = 25_000;
+
+type Waiter = { endpoint: string; holder: string; ahead: number; done: (lease: Lease) => void };
 
 type Entry = { seq: number; holder: string; state: 'held' | 'waiting'; since: number; expires: number };
 
@@ -21,6 +27,9 @@ type Entry = { seq: number; holder: string; state: 'held' | 'waiting'; since: nu
 export class LeaseLedger {
   readonly #db: DatabaseSync;
   readonly #config: LedgerConfig;
+  readonly #waiters = new Set<Waiter>();
+  // Per endpoint with waiters, the timer that wakes them at the next row's expiry: no request would notice it otherwise.
+  readonly #expiry = new Map<string, () => void>();
 
   constructor(config: LedgerConfig) {
     this.#config = config;
@@ -34,12 +43,16 @@ export class LeaseLedger {
   }
 
   close() {
+    for (const cancel of this.#expiry.values()) cancel();
+    for (const w of this.#waiters) w.done({ state: 'queued', ahead: w.ahead });
     this.#db.close();
   }
 
   gated = (endpoint: string) => Object.hasOwn(this.#config.capacity, endpoint);
 
   #sweep(endpoint: string) {
+    // A held acquire's open request is its heartbeat, so its place never lapses while it waits.
+    for (const w of this.#waiters) if (w.endpoint === endpoint) this.#touch(endpoint, w.holder);
     const now = this.#config.now();
     this.#db.prepare('DELETE FROM entries WHERE endpoint = ? AND expires <= ?').run(endpoint, now);
     const held = (this.#db.prepare("SELECT COUNT(*) AS n FROM entries WHERE endpoint = ? AND state = 'held'").get(endpoint) as { n: number }).n;
@@ -85,12 +98,38 @@ export class LeaseLedger {
       const now = this.#config.now();
       this.#db.prepare("INSERT INTO entries (endpoint, holder, state, since, expires) VALUES (?, ?, 'waiting', ?, ?)").run(endpoint, holder, now, now + this.#config.ttlMs);
     }
-    return this.lease(endpoint, holder)!;
+    const lease = this.lease(endpoint, holder)!;
+    this.#settle(endpoint);
+    return lease;
+  }
+
+  /** An acquire held while the holder is queued with `ahead` places before it: it answers on a grant, a move up the queue, or after HOLD_MS.
+   * An abort (the client went away) drops the place, so it is never granted to a gone client. */
+  wait(endpoint: string, holder: string, ahead: number, signal?: AbortSignal): Promise<Lease> {
+    signal?.throwIfAborted();
+    const now = this.acquire(endpoint, holder);
+    if (now.state === 'granted' || now.ahead !== ahead) return Promise.resolve(now);
+    return new Promise((resolve, reject) => {
+      const w: Waiter = { endpoint, holder, ahead, done: (lease) => (end(), resolve(lease)) };
+      const timeout = this.#config.setTimer(() => w.done(this.acquire(endpoint, holder)), HOLD_MS);
+      const gone = () => {
+        end();
+        // Another request of the same holder (a restarted process) keeps the place.
+        if (![...this.#waiters].some((o) => o.endpoint === endpoint && o.holder === holder)) this.release(endpoint, holder);
+        reject(signal!.reason);
+      };
+      const end = () => (this.#waiters.delete(w), timeout(), signal?.removeEventListener('abort', gone));
+      this.#waiters.add(w);
+      signal?.addEventListener('abort', gone, { once: true });
+      this.#armExpiry(endpoint);
+    });
   }
 
   /** Extends a held lease; a queued one is answered unchanged, and undefined means the lease is gone (lapsed, possibly regranted). */
   heartbeat(endpoint: string, holder: string): Lease | undefined {
     const lease = this.lease(endpoint, holder);
+    // Its sweep may have expired a holder and promoted a waiter.
+    if (this.gated(endpoint)) this.#settle(endpoint);
     if (lease?.state !== 'granted' || !lease.expireTime) return lease;
     this.#touch(endpoint, holder);
     return this.lease(endpoint, holder);
@@ -99,6 +138,26 @@ export class LeaseLedger {
   release(endpoint: string, holder: string) {
     this.#db.prepare('DELETE FROM entries WHERE endpoint = ? AND holder = ?').run(endpoint, holder);
     this.#sweep(endpoint);
+    this.#settle(endpoint);
+  }
+
+  // Answers each held acquire on the endpoint whose place changed; a waiter whose row is gone waits for its abort or timeout.
+  #settle(endpoint: string) {
+    for (const w of this.#waiters) {
+      const e = w.endpoint === endpoint ? this.#get(endpoint, w.holder) : undefined;
+      const lease = e && this.#view(endpoint, e);
+      if (lease && (lease.state === 'granted' || lease.ahead !== w.ahead)) w.done(lease);
+    }
+    this.#armExpiry(endpoint);
+  }
+
+  #armExpiry(endpoint: string) {
+    this.#expiry.get(endpoint)?.();
+    this.#expiry.delete(endpoint);
+    if (![...this.#waiters].some((w) => w.endpoint === endpoint)) return;
+    const { at } = this.#db.prepare('SELECT MIN(expires) AS at FROM entries WHERE endpoint = ?').get(endpoint) as { at: number | null };
+    if (at === null) return;
+    this.#expiry.set(endpoint, this.#config.setTimer(() => (this.#expiry.delete(endpoint), this.#sweep(endpoint), this.#settle(endpoint)), Math.max(0, at - this.#config.now())));
   }
 
   /** Each gated endpoint's holders, waiters and recent wait durations, for the operate view. */
