@@ -5,7 +5,9 @@ import { eachView, paneOf, visible, type Scenario } from '../scenario.ts';
 const SOURCE = 'https://example.com/';
 const GOOD = 'Example.com is reserved for examples in documents.';
 const BAD = 'Example.com is run by the moon.';
-const report = (finding: string) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n- ${finding} [s1]\n`;
+// Six findings the judge answers slowly, so a step can watch a round's counts move.
+const LIVE = Array.from({ length: 6 }, (_, i) => `Example.com serves example ${i + 1}.`);
+const report = (...findings: string[]) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n${findings.map((f) => `- ${f} [s1]\n`).join('')}`;
 const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
 
 // supported_by_source finds BAD's claim silent in the source and GOOD's stated. The regex keys on the question wording in packages/research/src/report.ts.
@@ -15,9 +17,10 @@ const choice = (c: string) => ({ choice: c, confidence: 1, reason: 'qa' });
 // The judge asks both source checks of a finding in one packed request ({"q0":..,"q1":..}); answer each question by its own text, and a single question by the whole request.
 function judgeReply(all: string, prompt: string) {
   if (process.env.JL_DEBUG) console.log("JUDGE", prompt.slice(0, 150).replace(/\n/g, " "), "..", prompt.slice(-200).replace(/\n/g, " "));
-  if (!/"q0": \{/.test(prompt)) return { content: JSON.stringify(choice(verdict(all, all))) };
+  const slow = /serves example \d/.test(prompt) ? { delayMs: 1500 } : {};
+  if (!/"q0": \{/.test(prompt)) return { content: JSON.stringify(choice(verdict(all, all))), ...slow };
   const qs = [...prompt.matchAll(/^- (q\d+): (.*)$/gm)];
-  return { content: JSON.stringify(Object.fromEntries(qs.map(([, id, q]) => [id, choice(verdict(q, prompt))]))) };
+  return { content: JSON.stringify(Object.fromEntries(qs.map(([, id, q]) => [id, choice(verdict(q, prompt))]))), ...slow };
 }
 
 // The writer's next move from the flow its input names and the last tool result; a request without tools is the judge asking.
@@ -29,7 +32,7 @@ const script: FakeScript = ({ messages = [], tools = [] }) => {
   const written = messages.filter((m) => m.role === 'tool' && /passed|failed/.test(text(m))).length;
   if (!last) return { tool: { name: 'web_fetch', arguments: { urls: [SOURCE] } } };
   if (/passed\.|Stop: this run is over/.test(last) || (/revision limit is reached/.test(last) && !flow.includes('flow:past'))) return { content: 'Done.' };
-  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: report(written ? GOOD : BAD) } } };
+  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: flow.includes('flow:live') ? report(...LIVE) : report(written ? GOOD : BAD) } } };
   return { tool: { name: 'submit_report', arguments: {} } };
 };
 
@@ -85,6 +88,21 @@ const scenario: Scenario = {
       await visible(pane.getByRole('img', { name: 'Failed' }).first());
       await visible(pane.getByText(`“${BAD}”`).first());
       await ctx.shot(page, `judge-loop-limit-${label}`);
+    });
+    await eachView(ctx, "a running double-check counts its items done, over a bar of who settled them", async (page, label) => {
+      const key = `qa-judge-live-${label}`;
+      const run = runFlow(ctx.url, key, 'qa-judge-0', 'live');
+      try {
+        // The judge starts once the report is sealed, within 10 s; on a phone the chat holds the running checks.
+        const sealed = async () => ((await (await fetch(`${ctx.url}/sessions/${key}/artifacts`)).json().catch(() => ({}))) as { artifacts?: unknown[] }).artifacts?.length;
+        for (let i = 0; i < 50 && !(await sealed()); i++) await new Promise((r) => setTimeout(r, 200));
+        await page.goto(`${ctx.url}/#/s/${key}`);
+        if (label.startsWith('400')) await page.getByRole('tab', { name: /^Chat/ }).click();
+        await visible(page.getByRole('list', { name: 'Checks running' }).getByText('2/6'));
+        await ctx.shot(page, `judge-loop-live-${label}`);
+      } finally {
+        await run;
+      }
     });
     await ctx.step('the passed report shows its verdict beside the chat once expanded', async () => {
       const page = await ctx.browser.newPage({ viewport: { width: 1280, height: 900 } });
