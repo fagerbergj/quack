@@ -166,11 +166,11 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
       {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
       <Pending attach={attach} />
       {stopError && <p role="alert" className="pointer-events-auto m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2 text-[13px] text-danger">{stopError}</p>}
-      <form onSubmit={submit} {...attach.handlers} className="focus-ring pointer-events-auto flex items-center gap-1 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-1 shadow-lift ring-1 ring-line-strong transition">
+      <form onSubmit={submit} {...attach.handlers} className="focus-ring pointer-events-auto flex flex-col rounded-[26px] bg-soft pt-1.5 pb-1 shadow-lift ring-1 ring-line-strong transition">
+        <div className="flex items-center gap-1 pr-1.5 pl-1">
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => composerKeyDown(e, setInput)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="field-grow max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <ModelPicker sessionKey={sessionKey} />
         {busy && empty ? (
           <button type="button" onClick={stop} disabled={state !== 'open' || stopping} aria-busy={stopping} aria-label="Stop" title={queued.length ? 'Stop this run; queued messages still send' : 'Stop this run'} className={btn}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
@@ -180,6 +180,8 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
           </button>
         )}
+        </div>
+        <ModelPicker sessionKey={sessionKey} />
       </form>
     </>
   );
