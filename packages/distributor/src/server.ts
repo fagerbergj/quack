@@ -11,7 +11,8 @@ import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
 import { modelRoutes, type SessionModels } from './models.ts';
-import { pageSockets, serveStarting } from './starting-socket.ts';
+import { openOutbox, type Outbox } from './outbox.ts';
+import { pageSockets, sessionOutbox } from './starting-socket.ts';
 
 export const { readBody, send, json } = serviceHttp();
 
@@ -163,9 +164,10 @@ function announced<V>(announce: (key: string) => void): Map<string, V> {
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; waiting?: ModelWait | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** The models sessions run: the Sessions API's `model`, and `/models` and `/settings`. */ models?: SessionModels; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** The models sessions run: the Sessions API's `model`, and `/models` and `/settings`. */ models?: SessionModels; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; /** Inputs pages sent while their session had no process; default: kept in memory. */ outbox?: Outbox; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? unrefTimer;
+  const outbox = opts.outbox ?? openOutbox(':memory:');
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();
@@ -436,6 +438,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     const busy = live && (await ping(key).then((p) => p.status === 'HealthyBusy', () => true));
     const why = busy ? 'is running'
       : serving.has(key) ? 'is handling a request'
+      : outbox.pending(key) ? 'has messages waiting to be delivered'
       : !marked.has(key) && (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : ((await opts.catalog?.getSession(key))?.pendingAsks ?? 0) > 0 ? 'is waiting on a person' : undefined;
     if (why) return { refused: why };
@@ -554,26 +557,27 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     }
   });
   const pages = pageSockets();
-  const started = async (key: string, agent: string | undefined, who: Principal) => {
-    const url = await driver.ensure(key, agent);
+  // The agent was checked against the binding before a page opens, so starting needs none; each use counts as activity for the idle sweep.
+  const started = async (key: string, who?: Principal) => {
+    const url = await driver.ensure(key);
     arm(key, undefined);
-    return { url, headers: upstream(key, who) };
+    lastUse.set(key, now());
+    return { url: `${url.replace(/^http/, 'ws')}/ws`, headers: upstream(key, who) };
   };
-  // A running session's socket is spliced onto its own; any other opens at once on its store's frames while its process starts.
+  const queued = sessionOutbox({ outbox, open: started, setTimer, log: (line) => console.warn(line) });
+  // Inputs a previous run of the distributor accepted but never delivered start their sessions now.
+  for (const key of outbox.keys()) queued.drain(key);
+  // A running session's socket is spliced onto its own; any other, or one with inputs still queued here, opens at once on its store's frames.
   async function openPage(key: string, agent: string | undefined, who: Principal, req: IncomingMessage, socket: Duplex, head: Buffer) {
     const bound = await driver.agentOf(key);
     if (bound === undefined) throw new AgentError(404, 'no such session');
     if (agent && agent !== bound) throw new AgentError(409, `session runs agent ${bound}, not ${agent}`);
-    if (driver.running().includes(key)) {
-      const { url, headers } = await started(key, agent, who);
+    if (driver.running().includes(key) && !queued.pending(key)) {
+      const { url, headers } = await started(key, who);
       return await proxyUpgrade(url, headers, req, '/ws', socket, head);
     }
     const frames = await driver.snapshot(key).catch((err) => (console.error(`session ${key}: reading its store for a page failed: ${err.message}`), []));
-    const start = async () => {
-      const { url, headers } = await started(key, agent, who);
-      return { url: `${url.replace(/^http/, 'ws')}/ws`, headers };
-    };
-    pages.handleUpgrade(req, socket, head, (page) => serveStarting(page, { frames, start, setTimer }));
+    pages.handleUpgrade(req, socket, head, (page) => queued.serve(page, key, who, frames));
   }
   const sessions = sessionListener(route, opts.sessions, api);
   server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); if (sessions.listening) sessions.close(); });

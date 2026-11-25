@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { backup, DatabaseSync } from 'node:sqlite';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai';
 import { createRegistry, Harness, type Conversation } from '@earendil-works/pi-durable';
@@ -11,6 +11,8 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { Artifacts, type SealedArtifact } from '@quack/sdk';
 
 const ctx = BACKGROUND_CONTEXT;
+// 4 KiB pages: 512 per step is about 2 MB, a few milliseconds of copying between event-loop turns.
+const BACKUP_PAGES_PER_STEP = 512;
 const EXPORTED = new Set(['pi.user', 'pi.assistant', 'pi.tool-result']);
 
 export type SessionExport = { transcript: Array<{ kind: string; model: unknown }>; artifacts: SealedArtifact[] };
@@ -38,8 +40,8 @@ export const sessionExport = async (harness: Harness, root: Conversation): Promi
 /** The export of the session stored in `dir`, opening nothing for writing; throws when the store cannot be read. */
 export const readExport = async (dir: string): Promise<SessionExport> => (await readStore(dir, sessionExport)) ?? { transcript: [], artifacts: [] };
 
-/** Reads the session stored in `dir` without opening it for writing; undefined for a session that never ran, throws when the store cannot be read.
- * The store is copied in one read transaction first, since pi-durable's open writes; a process that starts meanwhile writes only the original. */
+/** Reads the session in `dir` from a copy, since pi-durable's open writes; undefined for a session that never ran, throws when the store cannot be read.
+ * The online backup copies a consistent snapshot in steps that yield to the event loop; a process that starts meanwhile writes only the original. */
 export async function readStore<T>(dir: string, read: (harness: Harness, root: Conversation) => Promise<T>): Promise<T | undefined> {
   const file = join(dir, 'session.sqlite');
   if (!existsSync(file)) return undefined;
@@ -47,7 +49,7 @@ export async function readStore<T>(dir: string, read: (harness: Harness, root: C
   try {
     const source = new DatabaseSync(file, { readOnly: true, timeout: 5_000 });
     try {
-      source.prepare('VACUUM INTO ?').run(join(tmp, 'session.sqlite'));
+      await backup(source, join(tmp, 'session.sqlite'), { rate: BACKUP_PAGES_PER_STEP });
     } finally {
       source.close();
     }

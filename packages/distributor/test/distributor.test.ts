@@ -218,7 +218,7 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
   assert.deepEqual(driver.running(), []);
 });
 
-test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
+test('a page on an unknown session is refused, and the distributor keeps serving', async () => {
   const broken = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, pinned: async () => ({}), exported: async () => ({ transcript: [], artifacts: [] }), snapshot: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined, credential: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
