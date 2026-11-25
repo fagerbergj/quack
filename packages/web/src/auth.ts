@@ -1,4 +1,6 @@
 // The app sits behind a forward-auth proxy: an expired sign-in answers any request with a redirect to the login origin.
+import { unsaved } from './unsaved.ts';
+
 const STAMP = 'quack.signInAt';
 const WINDOW_MS = 30_000;
 
@@ -14,7 +16,12 @@ export const navigation = { reload: () => location.reload() };
 
 let stuck = false;
 const listeners = new Set<() => void>();
-/** Whether a sign-in navigation came straight back, so the page shows the banner instead of trying again; `forget` is for tests. */
+function setStuck(v: boolean) {
+  if (stuck === v) return;
+  stuck = v;
+  listeners.forEach((fn) => fn());
+}
+/** Whether the page needs the person to reload to sign in, shown as the banner until a call is answered again (another tab signed in); `forget` is for tests. */
 export const signInStuck = {
   subscribe: (fn: () => void) => (listeners.add(fn), () => void listeners.delete(fn)),
   get: () => stuck,
@@ -29,10 +36,10 @@ function lastTrip(): number | undefined {
   }
 }
 
-/** Reloads the whole page, so the proxy's login runs as a top-level navigation and returns here; a second trip within the window, or no storage to tell, shows the banner instead of looping. */
+/** Reloads the whole page, so the proxy's login runs as a top-level navigation and returns here. Shows the banner instead when a reload would lose typed text, came straight back within the window, or storage cannot tell. */
 export function signIn(): void {
   const last = lastTrip();
-  if (last !== undefined && Date.now() - last >= WINDOW_MS) {
+  if (!unsaved() && last !== undefined && Date.now() - last >= WINDOW_MS) {
     try {
       sessionStorage.setItem(STAMP, String(Date.now()));
       return navigation.reload();
@@ -40,8 +47,7 @@ export function signIn(): void {
       // Storage refused the stamp, so a reload could loop: fall through to the banner.
     }
   }
-  stuck = true;
-  listeners.forEach((fn) => fn());
+  setStuck(true);
 }
 
 // A same-origin redirect (a trailing slash, an https upgrade) is not a sign-in, so the opaque one is followed to see where it lands.
@@ -53,7 +59,7 @@ async function landsOffOrigin(path: string): Promise<boolean> {
 /** fetch for every call to quack: a redirect to another origin is an expired sign-in, which sends the page to sign in and throws SignInExpired. */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, redirect: 'manual' });
-  if (res.type !== 'opaqueredirect') return res;
+  if (res.type !== 'opaqueredirect') return setStuck(false), res;
   if (!(await landsOffOrigin(path))) return fetch(path, init);
   signIn();
   throw new SignInExpired();

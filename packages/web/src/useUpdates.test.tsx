@@ -1,6 +1,7 @@
 import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { outdated, unsaved, useUpdates } from './useUpdates.ts';
+import { unsaved } from './unsaved.ts';
+import { outdated, useUpdates } from './useUpdates.ts';
 import type { Version } from './api.ts';
 import { useHarness } from './test-harness.ts';
 

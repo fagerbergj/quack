@@ -48,3 +48,21 @@ test('a sign-in after the window has passed reloads again', () => {
   expect(navigation.reload).toHaveBeenCalledTimes(2);
   expect(signInStuck.get()).toBe(false);
 });
+
+test('a sign-in while text is typed shows the banner instead of reloading, so the draft is not lost', () => {
+  render(<><textarea aria-label="Message" defaultValue="half a thought" /><SignInBanner /></>);
+  act(() => signIn());
+  expect(navigation.reload).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Sign in again');
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('half a thought');
+});
+
+test('the banner leaves once a call is answered again, as when another tab signed in', async () => {
+  render(<SignInBanner />);
+  act(() => signIn());
+  act(() => signIn());
+  expect(screen.getByRole('alert')).toBeInTheDocument();
+  vi.stubGlobal('fetch', async () => new Response('{}'));
+  await act(() => apiFetch('sessions'));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
