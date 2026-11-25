@@ -8,7 +8,7 @@ const scenario: Scenario = {
   async run(ctx) {
     await eachView(ctx, 'composer model picker', async (page, label) => {
       await page.goto(`${ctx.url}/#/s/qa-review`);
-      const picker = page.locator('#model-pick');
+      const picker = page.getByRole('combobox', { name: 'Model:' });
       await visible(picker);
       await picker.selectOption('');
       await ctx.shot(page, `composer-default-${label}`);

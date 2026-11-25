@@ -39,7 +39,7 @@ test('the pick marker shows only when the session has its own pick, on a line be
   openSession();
   const picker = await screen.findByRole('combobox', { name: 'Model:' });
   expect(screen.queryByTestId('model-picked')).toBeNull();
-  expect(screen.getByRole('textbox', { name: 'Message' }).compareDocumentPosition(picker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(picker.parentElement).not.toBe(screen.getByRole('textbox', { name: 'Message' }).parentElement);
   await userEvent.selectOptions(picker, 'local/big');
   expect(await screen.findByTestId('model-picked')).toBeInTheDocument();
 });
