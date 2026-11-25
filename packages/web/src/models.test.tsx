@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from './App.tsx';
-import { Fail, FakeSocket, fetchMock, routes, snapshot, useHarness } from './test-harness.ts';
+import { Fail, FakeSocket, fetchMock, routes, snapshot, stubViewport, useHarness } from './test-harness.ts';
 
 const MODELS = { models: [{ name: 'local/flash', contextWindow: 262144 }, { name: 'local/big', contextWindow: 131072, images: true }], defaultModel: 'local/flash' };
 
@@ -105,4 +105,19 @@ test('the Settings page names a refused default', async () => {
   await userEvent.selectOptions(select, 'local/big');
   expect(await screen.findByRole('alert')).toHaveTextContent('model local/big is not available');
   expect(select).toHaveValue('');
+});
+
+test('on a phone the picker is an icon whose name gives the pick, a dot marks the session\'s own pick, and picking still works', async () => {
+  stubViewport(false);
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/flash' };
+  routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big', resolvedModel: 'local/big' };
+  openSession();
+  const picker = await screen.findByRole('combobox', { name: 'Model: Default (local/flash)' });
+  expect(picker).toHaveAttribute('title', 'Model for the next run: local/flash, 256k context (default)');
+  expect(screen.queryByTestId('model-picked')).toBeNull();
+  await userEvent.selectOptions(picker, 'local/big');
+  await screen.findByRole('combobox', { name: 'Model: local/big' });
+  expect(screen.getByTestId('model-picked')).toBeInTheDocument();
+  expect(patches('sessions/ui%3Au1')).toEqual([{ model: 'local/big' }]);
+  expect(fireEvent.keyDown(picker, { key: 'Enter' })).toBe(false);
 });

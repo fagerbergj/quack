@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { getSessionModel, listModels, setSessionModel, type ModelInfo, type SessionModel } from './api.ts';
+import { useMedia } from './useDesktop.ts';
 import { useLoad } from './useLoad.ts';
 
 const NONE = { models: [] as ModelInfo[] };
@@ -22,6 +23,7 @@ export function ModelPicker({ sessionKey }: { sessionKey: string }) {
   const [saved, setSaved] = useState<SessionModel | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const narrow = !useMedia('(min-width: 640px)');
   if (loadError || !list.models.length) return null;
   const now = saved ?? loaded;
   const runs = now.resolvedModel;
@@ -32,16 +34,26 @@ export function ModelPicker({ sessionKey }: { sessionKey: string }) {
     setSaving(true);
     setSessionModel(sessionKey, next || null).then(setSaved, (e: Error) => setError(e.message)).finally(() => setSaving(false));
   };
+  const pick = now.model ? runs : `Default (${runs ?? 'none'})`;
+  const tip = error || detail;
   return (
     <>
-      <label htmlFor="model-pick" className="sr-only">Model</label>
-      <span id="model-pick-detail" className="sr-only">{error || detail}</span>
-      <select id="model-pick" value={now.model ?? ''} disabled={saving} aria-busy={saving || undefined} onChange={(e) => change(e.target.value)} onKeyDown={keepDraft}
-        title={error || detail} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
-        className={`focus-ring h-9 max-w-[8.5rem] min-w-0 flex-none cursor-pointer truncate rounded-full border-0 bg-transparent px-2 text-[13px] hover:bg-line/40 disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : 'text-muted'}`}>
-        <option value="">Default</option>
-        {list.models.map((m) => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
-      </select>
+      {!narrow && <label htmlFor="model-pick" className="sr-only">Model</label>}
+      <span id="model-pick-detail" className="sr-only">{tip}</span>
+      <span className={narrow ? 'relative grid h-11 w-11 flex-none place-items-center rounded-full text-ink-2 hover:text-ink has-focus-visible:ring-2 has-focus-visible:ring-accent' : 'contents'} title={narrow ? tip : undefined}>
+        {narrow && (
+          <>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></svg>
+            {now.model && <span data-testid="model-picked" className="absolute top-2 right-2 h-2 w-2 rounded-full bg-accent" />}
+          </>
+        )}
+        <select id="model-pick" value={now.model ?? ''} disabled={saving} aria-busy={saving || undefined} onChange={(e) => change(e.target.value)} onKeyDown={keepDraft}
+          title={tip} aria-label={narrow ? `Model: ${pick}` : undefined} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
+          className={narrow ? 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default' : `focus-ring h-9 max-w-[8.5rem] min-w-0 flex-none cursor-pointer truncate rounded-full border-0 bg-transparent px-2 text-[13px] hover:bg-line/40 disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : 'text-muted'}`}>
+          <option value="">Default</option>
+          {list.models.map((m) => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
+        </select>
+      </span>
     </>
   );
 }
