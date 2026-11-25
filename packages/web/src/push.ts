@@ -1,38 +1,38 @@
-import { json } from './api.ts';
+import { apiFetch, json } from './api.ts';
+import { SignInExpired } from './auth.ts';
 
 export type PushState = 'install' | 'unsupported' | 'blocked' | 'off' | 'on';
 
-/** A push step that failed: `message` is the terse line on screen, `detail` names the step and what to do, and `signIn` offers a reload. */
+/** A push step that failed: `message` is the terse line and `remedy` what to do, both on screen; `detail` adds which step and why. */
 export class PushError extends Error {
+  readonly remedy: string;
   readonly detail: string;
-  readonly signIn: boolean;
-  constructor(message: string, detail: string, signIn = false) {
+  constructor(message: string, cause: string, remedy: string) {
     super(message);
-    this.detail = detail;
-    this.signIn = signIn;
+    this.remedy = remedy;
+    this.detail = `${cause} ${remedy}`;
   }
 }
 
 // Browser messages may end in a period, and the detail adds its own after them.
 const why = (err: unknown) => (typeof (err as Error | null)?.message === 'string' ? (err as Error).message : String(err)).replace(/\.$/, '');
 
-// An expired forward-auth sign-in redirects to the login origin, which fetch reports only as "Failed to fetch"; manual makes it visible.
-async function call<T>(step: string, path: string, body?: unknown): Promise<T> {
+// An expired sign-in passes through untouched: apiFetch has already sent the page to sign in.
+async function request<T>(verb: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
-  const res = await fetch(path, { ...init, redirect: 'manual' }).catch((err: unknown) => {
-    throw new PushError("Can't reach quack", `Could not ${step}: ${why(err)}. Check the connection, then try again.`);
+  const res = await apiFetch(path, init).catch((err: unknown) => {
+    throw err instanceof SignInExpired ? err : new PushError("Can't reach quack", `Could not ${verb}: ${why(err)}.`, 'Check the connection, then try again.');
   });
-  if (res.type === 'opaqueredirect') throw new PushError('Sign in again', `Your sign-in expired, so quack could not ${step}. Reload to sign in, then try again.`, true);
   return json<T>(res).catch((err: unknown) => {
-    throw new PushError('quack refused', `Could not ${step}: ${why(err)}.`);
+    throw new PushError('quack refused', `Could not ${verb}: ${why(err)}.`, 'Try again later.');
   });
 }
 
-async function step<T>(message: string, what: string, hint: string, run: () => Promise<T>): Promise<T> {
+async function guard<T>(message: string, verb: string, remedy: string, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (err) {
-    throw new PushError(message, `Could not ${what}: ${why(err)}. ${hint}`);
+    throw new PushError(message, `Could not ${verb}: ${why(err)}.`, remedy);
   }
 }
 
@@ -56,23 +56,24 @@ const keyBytes = (b64url: string) => Uint8Array.from(atob(b64url.replace(/-/g, '
 
 export async function enablePush(): Promise<PushState> {
   if ((await Notification.requestPermission()) !== 'granted') return pushState();
-  const { publicKey } = await call<{ publicKey: string }>('get the push key', 'push/key');
-  const reg = await step('Worker failed', 'start the notification worker', 'Reload, then try again.', registration);
-  const sub = await step('Push service refused', "subscribe with the browser's push service", 'Check that this browser allows push messages, then try again.', () => reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
-  await call('save this device', 'push/subscribe', { subscription: sub.toJSON() });
+  const { publicKey } = await request<{ publicKey: string }>('get the push key', 'push/key');
+  const reg = await guard('Worker failed', 'start the notification worker', 'Reload, then try again.', registration);
+  const sub = await guard('Push service refused', "subscribe with the browser's push service", 'Check that this browser allows push messages, then try again.', () => reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
+  await request('save this device', 'push/subscribe', { subscription: sub.toJSON() });
   return 'on';
 }
 
 export async function disablePush(): Promise<PushState> {
   const sub = await current();
   if (sub) {
-    await call('remove this device', 'push/unsubscribe', { endpoint: sub.endpoint });
+    // The browser is the authority, so it unsubscribes first; a row the server keeps is dropped when the push service answers 410.
     await sub.unsubscribe();
+    await request('remove this device', 'push/unsubscribe', { endpoint: sub.endpoint }).catch(() => undefined);
   }
   return 'off';
 }
 
 export async function testPush(): Promise<void> {
   const sub = await current();
-  if (sub) await call('send a test', 'push/test', { endpoint: sub.endpoint });
+  if (sub) await request('send a test', 'push/test', { endpoint: sub.endpoint });
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { SignInExpired } from './auth.ts';
 import { disablePush, enablePush, PushError, pushState, testPush, type PushState } from './push.ts';
 
 const btn = 'min-h-11 cursor-pointer rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:cursor-default disabled:opacity-50';
@@ -25,7 +26,8 @@ export function NotificationsSetting() {
       const next = await job();
       if (next) setState(next);
     } catch (err) {
-      setError(err instanceof PushError ? err : new PushError('Something went wrong', err instanceof Error ? err.message : String(err)));
+      // An expired sign-in is the page's to handle: it is already reloading to sign in, or its banner says so.
+      if (!(err instanceof SignInExpired)) setError(err instanceof PushError ? err : new PushError('Something went wrong', err instanceof Error ? err.message : String(err), 'Try again.'));
     } finally {
       setBusy(false);
     }
@@ -44,11 +46,10 @@ export function NotificationsSetting() {
         )}
       </div>
       {error && (
-        <div role="alert" title={error.detail} className="mt-2 flex flex-wrap items-center gap-2 text-[13.5px] text-danger">
-          <span aria-hidden="true">{error.message}</span>
+        <p role="alert" title={error.detail} className="m-0 mt-2 text-[13.5px] text-danger">
+          <span aria-hidden="true">{`${error.message}. ${error.remedy}`}</span>
           <span className="sr-only">{`${error.message}. ${error.detail}`}</span>
-          {error.signIn && <button type="button" onClick={() => location.reload()} className={btn}>Reload</button>}
-        </div>
+        </p>
       )}
     </fieldset>
   );

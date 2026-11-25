@@ -131,7 +131,7 @@ test('the status line says what is going on and whether anything waits on you, i
 
 test('until the status answers, nothing is compared and no version carries a status label', async () => {
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`, { redirect: 'manual' }));
   expect(within(pane).queryByRole('region', { name: /^Changes/ })).toBeNull();
   expect(chip()).toBeNull();
   expect(shown()).toHaveAccessibleName('Version: v2');

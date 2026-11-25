@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
+import { probeSignIn } from '../api.ts';
 import type { Row } from '../sessions.ts';
 import { eventKey, prOf, pullKey, readPull, type Pull, type PullEvent } from './pulls.ts';
 
@@ -51,6 +52,7 @@ function pullStream(set: Dispatch<SetStateAction<Shown>>) {
     // A non-200 answer (a 503 past the cap) ends an EventSource for good instead of retrying, so the page reopens it itself.
     es = undefined;
     retry = setTimeout(open, REOPEN_MS);
+    void probeSignIn();
   }
   function close() {
     epoch++;

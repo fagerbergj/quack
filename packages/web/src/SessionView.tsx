@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, probeSignIn, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ModelPicker } from './ModelPicker.tsx';
@@ -71,6 +71,7 @@ function useSocket(key: string, agent: string | undefined) {
         acks.current.clear();
         if (disposed) return;
         setState('reconnecting');
+        void probeSignIn();
         timer = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 30_000));
       };
       sock.onmessage = (ev) => {

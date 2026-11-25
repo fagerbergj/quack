@@ -1,4 +1,5 @@
 // Review comments as the contracts app serves them (Contracts app API v13); the app is the authority for quote, state and outdated.
+import { apiFetch } from '../../api.ts';
 
 /** Where a comment is made: a document pointer, a choice, the changes rows of a choice, or an intent entry. */
 export type Anchor = { on: 'document'; ptr: string } | { on: 'choice'; id: string } | { on: 'change'; choice: string } | { on: 'guarantee' | 'nonGoal'; text: string; id?: string };
@@ -18,7 +19,7 @@ export class AppError extends Error {
 
 const base = (key: string) => `apps/contracts/contracts/${encodeURIComponent(key)}`;
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json' } });
+  const res = await apiFetch(path, { ...init, headers: { 'content-type': 'application/json' } });
   if (!res.ok) {
     const p = (await res.json().catch(() => null)) as { detail?: string } | null;
     throw new AppError(res.status, p?.detail ?? `HTTP ${res.status}`);

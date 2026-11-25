@@ -1,6 +1,7 @@
 import { act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import { forgetVersion } from './api.ts';
+import { navigation, signInStuck } from './auth.ts';
 import { forgetContent } from './useContent.tsx';
 
 /** A route that answers with an error status instead of a JSON body. */
@@ -153,6 +154,10 @@ export function useHarness(base: () => Routes) {
     fetchMock.mockClear();
     forgetVersion();
     forgetContent();
+    signInStuck.forget();
+    sessionStorage.clear();
+    // No test leaves the page; one that expects a sign-in reads this spy.
+    vi.spyOn(navigation, 'reload').mockReset().mockImplementation(() => {});
     vi.stubGlobal('WebSocket', FakeSocket);
     vi.stubGlobal('EventSource', FakeEventSource);
     vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
