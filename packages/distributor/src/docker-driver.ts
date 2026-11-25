@@ -13,6 +13,8 @@ import { LAUNCH_TOKEN_FILE, LISTENER_TOKEN_FILE, writeLaunchToken, writeListener
 const SESSION_PORT = 8080;
 const STOP_GRACE_SECONDS = 20;
 const PING_TIMEOUT_MS = 2_000;
+// A refused probe costs one connect, so a short pause trims the wait after the server listens without loading anything.
+const PROBE_PAUSE_MS = 20;
 
 export type DockerLauncherOptions = {
   api: DockerCall;
@@ -85,7 +87,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     while (!dead) {
       if (await fetch(`${url}/ping`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(PING_TIMEOUT_MS) }).then((r) => r.ok, () => false)) return;
       if (Date.now() > deadline) throw new Error(`session container ${name} did not answer /ping`);
-      await sleep(100);
+      await sleep(PROBE_PAUSE_MS);
     }
     throw new Error(`session container ${name} exited during start; see docker logs ${name}`);
   }

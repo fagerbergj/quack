@@ -11,6 +11,7 @@ import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
 import { modelRoutes, type SessionModels } from './models.ts';
+import { pageSockets, serveStarting } from './starting-socket.ts';
 
 export const { readBody, send, json } = serviceHttp();
 
@@ -547,14 +548,33 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     try {
       await stopping.get(target.key);
       await removing.get(target.key);
-      await mustExist(target.key, 'GET /ws');
-      const url = await driver.ensure(target.key, target.agent);
-      arm(target.key, undefined);
-      await proxyUpgrade(url, upstream(target.key, who), req, '/ws', socket, head);
+      await openPage(target.key, target.agent, who, req, socket, head);
     } catch {
       socket.destroy();
     }
   });
+  const pages = pageSockets();
+  const started = async (key: string, agent: string | undefined, who: Principal) => {
+    const url = await driver.ensure(key, agent);
+    arm(key, undefined);
+    return { url, headers: upstream(key, who) };
+  };
+  // A running session's socket is spliced onto its own; any other opens at once on its store's frames while its process starts.
+  async function openPage(key: string, agent: string | undefined, who: Principal, req: IncomingMessage, socket: Duplex, head: Buffer) {
+    const bound = await driver.agentOf(key);
+    if (bound === undefined) throw new AgentError(404, 'no such session');
+    if (agent && agent !== bound) throw new AgentError(409, `session runs agent ${bound}, not ${agent}`);
+    if (driver.running().includes(key)) {
+      const { url, headers } = await started(key, agent, who);
+      return await proxyUpgrade(url, headers, req, '/ws', socket, head);
+    }
+    const frames = await driver.snapshot(key).catch((err) => (console.error(`session ${key}: reading its store for a page failed: ${err.message}`), []));
+    const start = async () => {
+      const { url, headers } = await started(key, agent, who);
+      return { url: `${url.replace(/^http/, 'ws')}/ws`, headers };
+    };
+    pages.handleUpgrade(req, socket, head, (page) => serveStarting(page, { frames, start, setTimer }));
+  }
   const sessions = sessionListener(route, opts.sessions, api);
   server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); if (sessions.listening) sessions.close(); });
   /** The entry the in-process apps call: the tailnet's reach on the distributor's own routes, and no principal toward a session. */

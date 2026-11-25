@@ -35,12 +35,14 @@ export async function sealedOf(harness: Harness, root: Conversation): Promise<Se
 
 export const sessionExport = async (harness: Harness, root: Conversation): Promise<SessionExport> => ({ transcript: await transcriptOf(root), artifacts: await sealedOf(harness, root) });
 
-/** The export of the session stored in `dir`, opening nothing for writing; throws when the store cannot be read.
+/** The export of the session stored in `dir`, opening nothing for writing; throws when the store cannot be read. */
+export const readExport = async (dir: string): Promise<SessionExport> => (await readStore(dir, sessionExport)) ?? { transcript: [], artifacts: [] };
+
+/** Reads the session stored in `dir` without opening it for writing; undefined for a session that never ran, throws when the store cannot be read.
  * The store is copied in one read transaction first, since pi-durable's open writes; a process that starts meanwhile writes only the original. */
-export async function readExport(dir: string): Promise<SessionExport> {
+export async function readStore<T>(dir: string, read: (harness: Harness, root: Conversation) => Promise<T>): Promise<T | undefined> {
   const file = join(dir, 'session.sqlite');
-  // A session that never ran has no store yet; its process would answer from an empty one.
-  if (!existsSync(file)) return { transcript: [], artifacts: [] };
+  if (!existsSync(file)) return undefined;
   const tmp = await mkdtemp(join(tmpdir(), 'quack-export-'));
   try {
     const source = new DatabaseSync(file, { readOnly: true, timeout: 5_000 });
@@ -51,7 +53,7 @@ export async function readExport(dir: string): Promise<SessionExport> {
     }
     const harness = await Harness.open(await openNodeSqliteStorage(join(tmp, 'session.sqlite')), { models: createModels(), registry: createRegistry(), readOnly: true }, ctx);
     try {
-      return await sessionExport(harness, await harness.root(ctx));
+      return await read(harness, await harness.root(ctx));
     } finally {
       await harness.close(ctx);
     }

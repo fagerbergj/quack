@@ -8,3 +8,4 @@ export { append, currentEvents, LifecycleStream, readStream, revisions, spendOf,
 export { batchOf, MAX_BATCH_EVENTS, MAX_BODY_BYTES, runsIn, startLifecycleSender, unrefTimer, viewSignature, type SenderOptions, type SetTimer } from './lifecycle-sender.ts';
 export { createdAt, firstInput, recordedTitle, sessionFacts, TITLE_MAX } from './facts.ts';
 export { readExport, type SessionExport } from './export.ts';
+export { MAX_FRAME, parseClient, requestIdOf, snapshotFrames } from './live.ts';
