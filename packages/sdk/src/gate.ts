@@ -54,6 +54,8 @@ export const actionable = (a: Approval) => !a.withdrawn && !a.executing && a.ver
 export function withdrawApprovals(doc: ApprovalsDoc, pick: (id: string, a: Approval) => boolean, w: Withdrawal): string[] {
   const ids = Object.keys(doc.items).filter((id) => actionable(doc.items[id]) && pick(id, doc.items[id]));
   for (const id of ids) doc.items[id].withdrawn = { ...w };
+  // A withdrawn approval's held approve will never be checked, so none is left to read as "Checking".
+  for (const id of ids) if (doc.items[id].approving) doc.items[id].approving = null;
   return ids;
 }
 
@@ -108,7 +110,12 @@ async function waitForAnswer(watch: { value: Readonly<ApprovalsDoc> | null; star
 
 // The gates run on a person's approve; a pass records it as the verdict, a failure clears it and keeps the approval open with their findings.
 async function checkApprove(api: ToolExecutionApi, id: string, asked: Approval, ctx: Context): Promise<Approval> {
-  const checks = await runApprovalGates(api, id, asked, ctx);
+  // A chain that threw ran no checks: it is recorded as undecided, so the approval reopens and a plain approve retries. A stopped task
+  // can commit nothing more; the session's Stop withdraws its approvals, clearing the held approve.
+  const checks = await runApprovalGates(api, id, asked, ctx).catch((e: unknown): ApprovalChecks => {
+    ctx.abortSignal?.throwIfAborted();
+    return { at: api.now(), passed: false, decided: false, feedback: [`The checks did not finish: ${e instanceof Error ? e.message : String(e)}`], detail: null };
+  });
   return api.commit(async (tx) => {
     const row = (await tx.doc(Approvals, api.conversationId)).items[id];
     if (row.verdict || row.withdrawn) return plain(row);

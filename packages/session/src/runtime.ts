@@ -123,6 +123,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     const top = (await harness.inspect(ctx)).tasks.map((t) => t.record).filter((t) => t.conversationId === c.id && t.owner === undefined && !t.background);
     await Promise.all(top.map((t) => harness.abortTask(t.id, ctx)));
     await Promise.all(top.map((t) => harness.waitForTask(t.id, ctx)));
+    // The stopped calls can act on no approval any more, a held approve included; withdrawn now, none keeps reading as waiting.
+    await withdrawEnded();
     // A run that answered before its abort mark landed settled its inputs done; only those the abort settled count.
     const settled = await Promise.all(inputs.map(async (id) => (await (await harness.submission(id, ctx))?.status(ctx))));
     const aborted = settled.filter((r) => r?.status === 'unanswered' && r.reason === 'aborted').map((r) => String(r!.id));

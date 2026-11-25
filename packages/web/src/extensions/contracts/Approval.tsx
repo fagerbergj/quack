@@ -137,6 +137,8 @@ const linesOf = (p: Pending) => (p.items.length
 
 /** Whether the model checks an approve ran could not run at all: no model answered, so they decided nothing. */
 export const unchecked = (c: ApprovalChecks) => c.decided === false;
+/** The status words for what an approve's model checks said. */
+export const heldLabel = (c: ApprovalChecks) => (unchecked(c) ? "Couldn't run the checks" : 'Model checks failed');
 
 // The model checks a first approve ran and failed, failing items first, or why they could not run; a gate that is not the judge's gives its text alone.
 function Findings({ checks }: { checks: ApprovalChecks }) {

@@ -97,12 +97,18 @@ test('an approve after checks that could not run runs them again; one with a rea
   assert.deepEqual([doc.items.b.verdict?.decision, doc.items.b.verdict?.reason], ['approve', 'checked by hand']);
 });
 
-test('a gate that denies at approval.approving reopens the approval as undecided, keeping no verdict', async (t) => {
-  t.after(gate('approval.approving', async () => ({ kind: 'deny', reason: 'model unreachable' })));
-  const approving = { decision: 'approve' as const, reason: null, by: jf, at: 5 };
-  const { tool, api } = setup(asked({ approving }));
-  void tool.execute({ body: 'hi' } as never, api as never, ctx);
-  await new Promise((r) => setImmediate(r));
-  const row = (await api.watchDoc()).value.items['1']!;
-  assert.deepEqual([row.verdict, row.approving, row.checks?.decided, row.checks?.feedback], [null, null, false, ['model unreachable']]);
-});
+const failing = [
+  ['denies', async () => ({ kind: 'deny' as const, reason: 'model unreachable' }), 'model unreachable'],
+  ['throws', async () => { throw new Error('inputs unreadable'); }, 'The checks did not finish: inputs unreadable'],
+] as const;
+for (const [how, run, said] of failing) {
+  test(`a gate that ${how} at approval.approving reopens the approval as undecided, held approve cleared and the call waiting again`, async (t) => {
+    t.after(gate('approval.approving', run));
+    const { tool, api, counts } = setup(asked({ approving: { decision: 'approve', reason: null, by: jf, at: 5 } }));
+    void tool.execute({ body: 'hi' } as never, api as never, ctx);
+    await new Promise((r) => setImmediate(r));
+    const row = (await api.watchDoc()).value.items['1']!;
+    assert.deepEqual([row.verdict, row.approving, row.checks?.decided, row.checks?.feedback], [null, null, false, [said]]);
+    assert.deepEqual([counts().ran, counts().watched], [0, 2], 'not run, and watching for the next answer (beside this read)');
+  });
+}

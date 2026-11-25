@@ -6,7 +6,7 @@ import { SessionKeyContext, type Stand, type StudioProps } from '../../extension
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, iconButton, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
-import { ApproveSheet, AskSheet, prim, sec, unchecked, useDecide, type Break, type Pending } from './Approval.tsx';
+import { ApproveSheet, AskSheet, heldLabel, prim, sec, unchecked, useDecide, type Break, type Pending } from './Approval.tsx';
 import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
 import { reasonText } from './comments.ts';
 import { Decided, Progress } from './Progress.tsx';
@@ -82,7 +82,7 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
   }
   if (s.proposal?.approving) return { can: false, title: `Checking ${name}`, sub: 'Running the model checks on your approve' };
   const held = s.proposal?.checks;
-  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: !held ? 'Checks passed' : unchecked(held) ? "Couldn't run the checks" : 'Model checks failed' };
+  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: held ? heldLabel(held) : 'Checks passed' };
   return waiting(s);
 }
 
@@ -114,9 +114,9 @@ function useItems(diff: Diff | undefined, spec: ContractSpec | undefined, found:
 const link = 'min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap underline-offset-2 hover:underline focus-ring';
 
 // What the model checks an approve ran said, on a row of its own: in the title's column a phone's buttons squeeze it under the bar's edge.
-function HeldLine({ checks, label, onOpen }: { checks: NonNullable<Pending['checks']>; label: string; onOpen: () => void }) {
+function HeldLine({ checks, onOpen }: { checks: NonNullable<Pending['checks']>; onOpen: () => void }) {
   const why = unchecked(checks) ? checks.feedback.join(' ') : 'The model checks your approve ran found problems';
-  return <button type="button" onClick={onOpen} title={why} aria-description={why} className={`${link} ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{label}</button>;
+  return <button type="button" onClick={onOpen} title={why} aria-description={why} className={`${link} ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{heldLabel(checks)}</button>;
 }
 
 // Review, with draft comments in hand, else Ask for changes.
@@ -149,7 +149,7 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
         <StatusLine title={state.title} sub={held ? undefined : state.sub} onChecks={checks ? () => setSheet('checks') : undefined} />
         {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
       </div>
-      {held && <HeldLine checks={held} label={state.sub!} onOpen={() => setSheet('approve')} />}
+      {held && <HeldLine checks={held} onOpen={() => setSheet('approve')} />}
       {state.can && <DraftsLine />}
       <StrandedLine />
       {state.detail && <p className="m-0 max-h-24 overflow-y-auto text-[13px] whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">{state.detail}</p>}
