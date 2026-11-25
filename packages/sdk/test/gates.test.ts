@@ -82,6 +82,6 @@ test('time a gate spends waiting on a person does not count against its bound', 
   assert.deepEqual(await chain, ['approved']);
 });
 
-test('only artifact.sealed takes gates so far', () => {
-  assert.throws(() => gate('turn.ended', async () => undefined), /not wired yet/);
+test('an unwired point takes no gate', () => {
+  assert.throws(() => gate('turn.ended' as never, async () => undefined), /not wired yet/);
 });

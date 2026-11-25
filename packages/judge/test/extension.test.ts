@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool, type Extension, type ToolRegistration } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
+import { obj } from '@earendil-works/pi-schema';
+import { Approvals, Artifacts, artifactsExtension, gated, resolveApproval, type Approval, type ArtifactKind } from '@quack/sdk';
 import { openSession, readExport } from '@quack/session';
 import { subagentExtension } from '@quack/subagent';
 import { judged, manifest, type JudgeConfig, type Judged } from '../src/index.ts';
@@ -30,7 +32,7 @@ type Session = Awaited<ReturnType<typeof openSession>>;
 type Step = Reply | ((s: Session) => Promise<Reply>);
 
 // One run of an agent that enables the judge with `config` and registers test.note, the way a feature's session setup does.
-async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse'], inputs = ['Write and submit the note.'], judging = how(refuse)) {
+async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse'], inputs = ['Write and submit the note.'], judging = how(refuse), extra: Extension[] = []) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   let session: Session;
@@ -40,7 +42,7 @@ async function run(name: string, config: JudgeConfig, script: Step[], refuse?: J
   const m = faux.getModel();
   const judge = await manifest.session!(config, {}, []);
   judged(note.kind, judging);
-  session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
+  session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note]), ...extra] } });
   let result!: Awaited<ReturnType<Session['submit']>>;
   for (const [i, text] of inputs.entries()) result = await session.submit(text, `${name}-${i + 1}`, true);
   const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))?.kinds[note.kind]?.versions ?? [];
@@ -109,6 +111,71 @@ test('the gate judges with item reuse on: a model item unchanged since the last 
   const checks = r.versions.map((v) => (v.verdict as { checks: Array<{ id: string; resolvers: object; reused?: object }> }).checks.find((c) => c.id === 'polite'));
   assert.deepEqual(r.versions.map(passed), [false, true]);
   assert.deepEqual(checks.map((c) => [c?.resolvers, c?.reused]), [[{ 'faux-1': 1 }, undefined], [{}, { intro: 1 }]]);
+  assert.equal(r.answer, 'Done.');
+});
+
+// Resolves with the first value `pick` finds in the session's approvals, watching until one appears.
+async function untilApprovals<T>(s: Session, pick: (items: Record<string, Approval>) => T | undefined): Promise<T> {
+  await s.root.commit(async (tx) => { await tx.doc(Approvals, s.root.id); }, BACKGROUND_CONTEXT);
+  const watch = (await s.harness.watchDoc(Approvals, s.root.id, BACKGROUND_CONTEXT))!;
+  return new Promise<T>((resolve) => {
+    const hit = () => pick(watch.value?.items ?? {});
+    if (hit() !== undefined) return resolve(hit()!);
+    watch.start(async () => { const h = hit(); if (h !== undefined) resolve(h); });
+  }).finally(() => watch.stop());
+}
+
+// A note kind whose politeness check runs only on approve, and a gated tool that publishes the sealed version 1.
+const polite = { ...sayOk, criteria: [...sayOk.criteria, { id: 'manner', checks: [{ id: 'polite', label: 'Is not polite', weight: 1, when: 'approval' as const }] }] };
+const onApprove: Judged = {
+  rubric: polite, inputs: async () => ({ intro: 'Hello there.' }),
+  declaration: { scopes: { intro: { split: { name: 'whole', from: 'intro' } } }, checks: { polite: { scope: 'intro', question: { type: 'bool', instructions: 'Is it polite?' }, aggregate: { name: 'all' } } } },
+};
+const publish = gated(defineTool({ name: 'publish_note', description: 'Publish the note', parameters: obj({}, { open: true }), async execute() { return { output: [{ type: 'text', text: 'published' }] }; } }) as ToolRegistration, { subject: () => ({ kind: note.kind, version: 1 }) });
+const publishing = [defineExtension({ name: 'publish', tools: [publish] })];
+const jf = { kind: 'person', name: 'jf' } as const;
+const askToPublish = (approver: (s: Session) => Promise<void>) => async (s: Session) => (void approver(s), fauxAssistantMessage(fauxToolCall('publish_note', {}), { stopReason: 'toolUse' }));
+
+test("a check declared for approval skips every seal and runs on a person's approve of the version, for any kind with a gated tool", async () => {
+  let held: Approval['checks'];
+  // The person approves, reads the findings the gate held it open with, and approves again over them.
+  const approver = async (s: Session) => {
+    const id = await untilApprovals(s, (items) => Object.keys(items)[0]);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+    held = await untilApprovals(s, (items) => items[id].checks ?? undefined);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+  };
+  const rude = fauxAssistantMessage('{"choice": "no", "confidence": 0.9, "reason": "no greeting"}');
+  // The judge model is the agent's own: asked once, on the approve, never at the seal.
+  const r = await run('on-approve', { maxRevisions: 1 }, [write('ok'), submit, askToPublish(approver), rude, done], undefined, undefined, onApprove, publishing);
+  const draft = r.versions[0].verdict as { passed: boolean; checks: Array<{ id: string; met: unknown; deferred?: string }> };
+  assert.deepEqual([draft.passed, draft.checks.map((c) => [c.id, c.met, c.deferred])], [true, [['says_ok', 1, undefined], ['polite', null, 'approval']]]);
+  assert.match(r.seen[2], /manner\.polite not run yet, they run when a person approves\), passed\./);
+  const detail = held?.detail as { passed: boolean; checks: Array<{ id: string; met: unknown }> };
+  assert.deepEqual([held?.passed, detail.passed, detail.checks.find((c) => c.id === 'polite')?.met], [false, false, false]);
+  assert.match(held!.feedback.join(''), /missed manner\.polite: intro: no greeting/);
+  assert.match(r.seen[4], /published/);
+  assert.equal(r.answer, 'Done.');
+});
+
+test('when no model answers on approve, the checks are undecided, not failed, and the next plain approve runs them again', async () => {
+  let first: Approval['checks'];
+  let second: Approval['checks'];
+  const approver = async (s: Session) => {
+    const id = await untilApprovals(s, (items) => Object.keys(items)[0]);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+    first = await untilApprovals(s, (items) => items[id].checks ?? undefined);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+    second = await untilApprovals(s, (items) => (items[id].verdict ? items[id].checks ?? undefined : undefined));
+  };
+  // The judge model's first answer is unusable, so the item stays undecided; asked again on the retry, it answers.
+  const garbled = fauxAssistantMessage('the model is overloaded');
+  const polite = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason": "greets"}');
+  const r = await run('on-approve-retry', { maxRevisions: 1 }, [write('ok'), submit, askToPublish(approver), garbled, polite, done], undefined, undefined, onApprove, publishing);
+  assert.deepEqual([first?.passed, first?.decided, first?.detail], [false, false, null]);
+  assert.match(first!.feedback.join(''), /gave no usable answer for manner\.polite/);
+  assert.deepEqual([second?.passed, second?.decided], [true, true], 'the retry ran the checks and they passed');
+  assert.match(r.seen[5], /published/);
   assert.equal(r.answer, 'Done.');
 });
 

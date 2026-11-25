@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from '../../App.tsx';
-import type { Approval, SealedArtifact, Verdict } from '../../api.ts';
+import type { Approval, ApprovalChecks, SealedArtifact, Verdict } from '../../api.ts';
 import { byVersion, entry, Fail, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
 import { diffUnits, units } from './diff.ts';
 import { changeItems } from './review.ts';
@@ -23,6 +23,9 @@ const pass: Verdict = { passed: true, gatesFailed: [], score: 1, checks: [] };
 const fail: Verdict = { passed: false, gatesFailed: ['justified.links_resolve'], score: 0.5, checks: [{ criterion: 'justified', id: 'links_resolve', label: "A choice's link doesn't resolve", weight: 'gate', met: 0, notes: [] }] };
 const spec = (version: number, content: object, verdict: Verdict | null = pass): SealedArtifact => ({ kind: 'contract.spec', version, hash: `h${version}`, content: JSON.stringify(content), sealedAt: version, verdict, outcome: `v${(content as { version: number }).version}` });
 const approvedRec = (artifact: number, version: number): SealedArtifact => ({ kind: 'contract.approved', version: 1, hash: 'r', content: JSON.stringify({ version, artifact, note: `Approved version ${version}`, approval: 'old' }), sealedAt: 10, verdict: null });
+// The model checks a first approve ran: one guarantee failed, one held; `feedback` is what Send to the agent carries.
+const meets = { criterion: 'matches_intent', id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 1, units: 2 };
+const held: ApprovalChecks = { at: 30, passed: false, feedback: ['contract.spec v2: 0%, failed:\n- missed matches_intent.meets_intent: guarantee read-only: no field carries it'], detail: { passed: false, gatesFailed: [], score: 0, checks: [{ ...meets, met: false, notes: ['guarantee read-only: no field carries it'] }, { criterion: 'sound', id: 'version_matches', label: 'The version number is wrong', weight: 'gate', met: 1, notes: [] }] } };
 const proposal = (artifact: number, version: number, breaks: object[] = []) => ({ id: 'p/1', tool: 'propose_contract', args: { summary: `Approve GET /apps/sleeper/schedule v${version}`, version, artifact, hash: `h${artifact}`, findings: [], breaks }, requestedAt: 20 });
 
 // The contracts app's status read, as the page fetches it for this session.
@@ -124,6 +127,9 @@ test('the status line says what is going on and whether anything waits on you, i
   expect(at({ status: 'proposed', running: true })).toEqual({ can: false, title: 'v2 passed its checks', sub: 'The agent puts it up for approval when this step ends · nothing waits on you yet' });
   expect(at({ status: 'proposed' })).toEqual({ can: false, title: 'v2 is not up for approval', sub: 'Send a message and the agent puts it up again' });
   expect(at({ status: 'proposed', proposal: proposal(2, 2) as Approval })).toEqual({ can: true, title: 'v2 waits on you', sub: 'Checks passed' });
+  expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), approving: true } })).toEqual({ can: false, title: 'Checking v2', sub: 'Running the model checks on your approve' });
+  expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), checks: held } })).toEqual({ can: true, title: 'v2 waits on you', sub: 'Model checks failed' });
+  expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), checks: { ...held, decided: false, detail: null } } }).sub).toBe("Couldn't run the checks");
   expect(at({ status: 'changes_requested', running: true })).toEqual({ can: false, title: 'Changes asked for v2', sub: 'Asked by someone · the agent is revising it · nothing waits on you', detail: undefined });
   expect(at({ status: 'approved', isApproved: true })).toEqual({ can: false, done: true, title: 'v2 is approved', sub: 'Nothing in progress · nothing waits on you' });
   expect(at({ status: 'approved', isApproved: true, running: true }).sub).toBe('The agent is working · nothing waits on you');
@@ -181,6 +187,75 @@ test.each([
   const s = sheet('Approve v2?');
   expect(within(within(s).getAllByRole('list')[0]!).getAllByRole('listitem').map((li) => li.textContent).includes('Guarantees changed')).toBe(changed);
   expect(s.textContent).not.toMatch(/"id"|\[object Object\]/);
+});
+
+test("a draft's checks say the model checks run when you approve, and a first approve keeps the bar on the proposal while they run", async () => {
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  const draft: Verdict = { ...pass, checks: [{ ...meets, met: null, notes: [], units: 0, deferred: 'approval' }] };
+  const { ws } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2, draft)], [proposal(2, 2)]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Checks passed' }));
+  const s = sheet('Automatic checks on v2');
+  expect(within(s).getByText('Run when you approve')).toBeInTheDocument();
+  expect(within(s).getByRole('img', { name: 'Runs when you approve' })).toBeInTheDocument();
+  await userEvent.click(within(s).getByRole('button', { name: /close/i }));
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve v2' }));
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [{ ...proposal(2, 2), approving: true }] });
+  await waitFor(() => expect(line()).toHaveTextContent('Checking v2'));
+  expect(within(bar()).queryByRole('button', { name: 'Approve' }), 'nothing to decide while the checks run').toBeNull();
+});
+
+test('failed model checks lead the approve sheet, failing items first; Approve anyway and Send to the agent are each a deliberate second action', async () => {
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [{ ...proposal(2, 2), checks: held }]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Model checks failed' }));
+  const s = sheet('Approve v2?');
+  expect(within(s).getByRole('heading', { name: 'Model checks' })).toBeInTheDocument();
+  const fix = within(s).getByText('The revision must fix');
+  expect(fix.compareDocumentPosition(within(s).getByText('Checked, nothing found')) & Node.DOCUMENT_POSITION_FOLLOWING, 'failing items first').toBeTruthy();
+  expect(s).toHaveTextContent('guarantee read-only: no field carries it');
+  expect(within(s).queryByRole('button', { name: 'Approve v2' }), 'a plain approve is not offered over the findings').toBeNull();
+  await userEvent.click(within(s).getByRole('button', { name: 'Send to the agent' }));
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'reject', reason: held.feedback[0] } }]]);
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve v2?' })).toBeNull());
+});
+
+test("checks no model answered read Couldn't run the checks, with the reason as its description; Try again approves plainly, Approve anyway gives a reason", async () => {
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  const why = 'The decision model or the judge model gave no usable answer for matches_intent.meets_intent, so these checks did not run.';
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [{ ...proposal(2, 2), checks: { at: 30, passed: false, decided: false, feedback: [why], detail: null } }]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  const link = within(bar()).getByRole('button', { name: "Couldn't run the checks" });
+  expect(link).toHaveAccessibleDescription(why);
+  expect(within(bar()).queryByText('Model checks failed')).toBeNull();
+  await userEvent.click(link);
+  const s = sheet('Approve v2?');
+  expect(within(s).getByRole('heading', { name: "Couldn't run the checks" })).toBeInTheDocument();
+  expect(s).toHaveTextContent(why);
+  expect(within(s).queryByRole('button', { name: 'Send to the agent' }), 'no findings to send').toBeNull();
+  await userEvent.click(within(s).getByRole('button', { name: 'Try again' }));
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
+  expect(within(bar()).getByRole('button', { name: 'Approve' }), 'a retry stays shown while the checks run again').toBeInTheDocument();
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve anyway' }));
+  expect(posts().at(-1)).toEqual([`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve', reason: 'Approved without the model checks' } }]);
+});
+
+test('Approve anyway records the approve over the findings, with that as its reason', async () => {
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [{ ...proposal(2, 2), checks: held }]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve anyway' }));
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve', reason: "Approved over the model checks' findings" } }]]);
+  await waitFor(() => expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull());
 });
 
 test('asking for changes needs a reason, and sends it as the rejection the agent reads', async () => {

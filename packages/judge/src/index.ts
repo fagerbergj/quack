@@ -307,18 +307,27 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
   return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
 }
 
-async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
+/** Where a round runs: at a seal, which leaves the checks declared `when: 'approval'` for later, or at a person's approve, which runs them all. */
+export type Stage = 'seal' | 'approval';
+
+/** Whether a rubric leaves any check for a person's approve. */
+export const hasApprovalChecks = (r: Rubric) => r.criteria.some((c) => c.checks.some((k) => k.when === 'approval'));
+const atSeal = (r: Rubric): Rubric => ({ ...r, criteria: r.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => k.when !== 'approval') })) });
+const deferredRows = (r: Rubric): CheckResult[] => r.criteria.flatMap((c) => c.checks.filter((k) => k.when === 'approval').map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: null, units: 0, resolvers: {}, notes: [], deferred: 'approval' as const })));
+
+async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report, stage: Stage = 'approval'): Promise<Verdict> {
+  const run = stage === 'seal' ? { ...opts, rubric: atSeal(opts.rubric) } : opts;
   // Progress is only shown, so a failed write leaves the row at "Checking" rather than failing the submit.
-  await report?.send(progressOf(opts.rubric, [])).catch(() => undefined);
+  await report?.send(progressOf(run.rubric, [])).catch(() => undefined);
   const built = await evidenceFor(api, opts, sealed, ctx);
   const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
-  const code = codeResults(opts.rubric, sealed.content, built.evidence);
-  const model = await modelResults(api, opts, built, memo, ctx, code, reuse, report);
-  const checks = [...code, ...model];
+  const code = codeResults(run.rubric, sealed.content, built.evidence);
+  const model = await modelResults(api, run, built, memo, ctx, code, reuse, report);
+  const checks = [...code, ...model, ...(stage === 'seal' ? deferredRows(opts.rubric) : [])];
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
-  // The same budget the submit tool enforces: failures in this run since its last pass, not the session's.
-  const limit = (await judgedInRun(api, sealed.kind, ctx)) >= opts.maxRevisions;
+  // The same budget the submit tool enforces: failures in this run since its last pass, not the session's. A person's approve has none.
+  const limit = stage === 'seal' && (await judgedInRun(api, sealed.kind, ctx)) >= opts.maxRevisions;
   const undecided = checks.filter((k) => k.undecided).map((k) => `${k.criterion}.${k.id}`);
   return { run: await runOf(api, ctx), passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }
@@ -334,7 +343,8 @@ export function undecidedMessage(ids: string[], toolName: string): string {
 }
 
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
-  const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric})`;
+  const later = v.checks.filter((k) => k.deferred).map((k) => `${k.criterion}.${k.id}`);
+  const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric}${later.length ? `; ${later.join(', ')} not run yet, they run when a person approves` : ''})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
   // Notes under a pass read as a to-do list and drew revisions that replaced the passed version; the verdict keeps them for people.
   if (v.passed) return `${head}, passed.${delivers ? '' : ` Version ${sealed.version} is final for this run; finish without revising it.`}`;
@@ -345,14 +355,22 @@ export function report(sealed: SealedArtifact, v: Verdict, toolName: string, del
 /** One judging round: a deny past the revision limit, an undecided message (nothing attached), or the verdict, attached. */
 export type Outcome = { deny: string } | { undecided: string } | { verdict: Verdict };
 
+const shownIn = (api: ToolExecutionApi, ctx: Context, setTimer: SetTimer): Report | undefined => (typeof api.details === 'function' ? { send: (p: Progress) => api.details(p, ctx), setTimer } : undefined);
+
+/** Judges a sealed version on a person's approve, every check included; the approval records the verdict, so nothing is attached.
+ * `approvedAt` keys the round's memo, so a rerun after a crash reuses its answers and a later approve asks again. */
+export function checkApproval(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, approvedAt: number, setTimer = wallTimer): Promise<Verdict> {
+  return judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}:approval:${approvedAt}`, shownIn(api, ctx, setTimer), 'approval');
+}
+
 /** Judges a sealed version once: a version that carries a verdict keeps it, from any run. `setTimer` is the progress throttle's test seam. */
 export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, toolName: string, ctx: Context, setTimer = wallTimer): Promise<Outcome> {
   if (sealed.verdict) return { verdict: sealed.verdict as unknown as Verdict };
   // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
   if ((await judgedInRun(api, sealed.kind, ctx)) > opts.maxRevisions) return { deny: `${sealed.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.` };
   // A workflow step seals from code, whose task shows no running details.
-  const shown = typeof api.details === 'function' ? { send: (p: Progress) => api.details(p, ctx), setTimer } : undefined;
-  const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown);
+  const shown = shownIn(api, ctx, setTimer);
+  const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown, 'seal');
   // A verdict missing checks would pass or fail on a model outage; another submit asks again what this round left undecided.
   if (verdict.undecided.length) return { undecided: undecidedMessage(verdict.undecided, toolName) };
   await attachVerdict(api, sealed.kind, sealed.version, verdict as never, ctx);

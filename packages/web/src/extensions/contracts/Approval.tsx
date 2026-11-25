@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { decideApproval, type Approval, type Verdict } from '../../api.ts';
+import { decideApproval, type Approval, type ApprovalChecks, type Verdict } from '../../api.ts';
 import { CheckResult } from '../../CheckResult.tsx';
 import { Inline } from './Info.tsx';
 import { Glyph, Sheet } from './Review.tsx';
@@ -91,7 +91,11 @@ export function useDecide(sessionKey: string, proposal: Approval | undefined, de
     setBusy(decision);
     setError('');
     try {
-      if (await decideApproval(sessionKey, proposal.id, decision, reason)) return (decided(proposal.id), true);
+      if (await decideApproval(sessionKey, proposal.id, decision, reason)) {
+        // An approve the model checks run on stays shown: a failure brings it back with their findings.
+        if (decision === 'reject' || (proposal.checks && (!unchecked(proposal.checks) || reason))) decided(proposal.id);
+        return true;
+      }
       setError('This version was already decided, in another tab or by a message you sent. The page shows where it stands now.');
     } catch (e) {
       setError((e as Error).message);
@@ -103,8 +107,9 @@ export function useDecide(sessionKey: string, proposal: Approval | undefined, de
   return { busy, error, decide };
 }
 
-/** What the person decides on: the newest version, its changes against the approved one, and the checker's breaks. */
-export type Pending = { spec: ContractSpec; verdict?: Verdict | null; found?: Break[]; items: Item[]; base?: string; name: string };
+/** What the person decides on: the newest version, its changes against the approved one, the checker's breaks, and `checks`, the
+ * model checks a first approve ran when they failed. */
+export type Pending = { spec: ContractSpec; verdict?: Verdict | null; found?: Break[]; items: Item[]; base?: string; name: string; checks?: ApprovalChecks };
 type Deciding = ReturnType<typeof useDecide> & { onClose: () => void };
 
 const h3 = `m-0 font-sans ${label}`;
@@ -130,13 +135,40 @@ const linesOf = (p: Pending) => (p.items.length
   ? p.items.map((i) => ({ key: i.ptr + i.line, breaking: i.breaking, text: i.line }))
   : (p.spec.changes ?? []).map((c) => ({ key: c.choice, breaking: false, text: lede(c.now) || c.choice })));
 
-/** The confirmation before approving: one line per change, the breaks with their callers, and the judge's checks. */
+/** Whether the model checks an approve ran could not run at all: no model answered, so they decided nothing. */
+export const unchecked = (c: ApprovalChecks) => c.decided === false;
+/** The status words for what an approve's model checks said. */
+export const heldLabel = (c: ApprovalChecks) => (unchecked(c) ? "Couldn't run the checks" : 'Model checks failed');
+
+// The model checks a first approve ran and failed, failing items first, or why they could not run; a gate that is not the judge's gives its text alone.
+function Findings({ checks }: { checks: ApprovalChecks }) {
+  const text = <p className={`m-0 text-[13px] whitespace-pre-line ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{checks.feedback.join('\n')}</p>;
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className={h3}>{unchecked(checks) ? "Couldn't run the checks" : 'Model checks'}</h3>
+      {checks.detail && !unchecked(checks) ? <CheckResult verdict={checks.detail} open summary="Model checks failed" /> : text}
+    </section>
+  );
+}
+
+// Over failed findings: send them to the agent, or approve anyway. Over checks that could not run: try again, or approve anyway with that as the reason.
+function heldActions(checks: ApprovalChecks, busy: string | undefined, act: (d: 'approve' | 'reject', reason?: string) => void) {
+  const anyway = (reason: string, cls: string) => <button type="button" disabled={!!busy} onClick={() => act('approve', reason)} className={cls}>{busy === 'approve' ? 'Approving…' : 'Approve anyway'}</button>;
+  if (unchecked(checks)) return <>{anyway('Approved without the model checks', sec)}<button type="button" disabled={!!busy} onClick={() => act('approve')} title="Run the model checks again" className={prim}>Try again</button></>;
+  return <><button type="button" disabled={!!busy} onClick={() => act('reject', checks.feedback.join('\n'))} title="The agent revises against the findings" className={sec}>{busy === 'reject' ? 'Sending…' : 'Send to the agent'}</button>{anyway("Approved over the model checks' findings", prim)}</>;
+}
+
+/** The confirmation before approving: one line per change, the breaks with their callers, and the judge's checks. Once the model checks
+ * failed an approve, their findings lead, and the choice is to send them to the agent or to approve anyway. */
 export function ApproveSheet({ pending, busy, error, decide, onClose }: { pending: Pending } & Deciding) {
-  const { spec, verdict, found, base, name } = pending;
+  const { spec, verdict, found, base, name, checks } = pending;
   const lines = linesOf(pending);
-  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button><button type="button" disabled={!!busy} onClick={() => void decide('approve').then((ok) => ok && onClose())} className={prim}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</button></>;
+  const act = (decision: 'approve' | 'reject', reason?: string) => void decide(decision, reason).then((ok) => ok && onClose());
+  const approve = <button type="button" disabled={!!busy} onClick={() => act('approve')} className={prim}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</button>;
+  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button>{checks ? heldActions(checks, busy, act) : approve}</>;
   return (
     <Sheet title={`Approve ${name}?`} onClose={onClose} actions={actions}>
+      {checks && <Findings checks={checks} />}
       <p className="m-0 text-ink-2">{NOUN[spec.kind][2]} contract, measured against {base ?? 'no approved version'}.</p>
       {lines.length > 0 && <section className="flex flex-col gap-1">
         <h3 className={h3}>{lines.length} {lines.length === 1 ? 'change' : 'changes'}</h3>

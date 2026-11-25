@@ -15,8 +15,8 @@ export type SessionsApiDeps = {
   /** Deletes the session's directory, stopping its process; refused while it works or sleeps until a wake time. */
   deleteSession(key: string): Promise<'deleted' | 'absent' | { refused: string }>;
   /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it answered,
-   * `withdrawn` when the session withdrew the approval, or the session's reason for refusing a malformed answer. */
-  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
+   * `withdrawn` when the session withdrew the approval, `held` when it checks an approve before recording it, or the session's reason for refusing a malformed answer. */
+  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] } | { held: true }>;
   /** The session's wait for a model slot, shown on its row while it runs; one with `error` is a run waiting to retry its endpoint, shown while stopped too. */
   waiting?(key: string): { since: number; ahead: number; provider: string; error?: string } | undefined;
   /** A single session's read carries its own pick as `model` and the model its next run resolves to as `resolvedModel`. */
@@ -162,6 +162,8 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     if (!ask) throw new Problem(404, 'no such ask');
     const taken = ask.state === 'pending' && (await deps.answer(key, ask, { by, ...resolution }));
     if (typeof taken === 'string') throw new Problem(400, taken);
+    // A held approve stays pending here; the session's lifecycle stream resolves it once its checks pass, or it waits again.
+    if (typeof taken === 'object' && 'held' in taken) return askWire(ask);
     if (typeof taken === 'object' || ask.state === 'cancelled') throw new Problem(409, withdrawnText(typeof taken === 'object' ? taken.withdrawn : undefined));
     if (!taken) throw new Problem(409, `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}`);
     await catalog.resolve(key, id, { by, ...resolution });

@@ -157,6 +157,16 @@ test('asks: the needs-you list, one ask, and a nested resolution filled from the
   assert.equal((await call('GET', `/sessions/${k('review:monorepo')}/asks/nope`)).status, 404);
 });
 
+test('an approve the session holds for its checks leaves the ask pending; a second answer still reaches the session', async () => {
+  const path = `/sessions/${k('review:monorepo')}/asks/a-1`;
+  deps.sessionSays = { held: true };
+  const held = await call('PATCH', path, { body: { resolution: { choice: 'approve' } } });
+  assert.deepEqual([held.status, held.body.state], [200, 'pending']);
+  deps.sessionSays = true;
+  const again = await call('PATCH', path, { body: { resolution: { choice: 'approve', reason: 'over the findings' } } });
+  assert.deepEqual([again.status, again.body.state, deps.answered.length], [200, 'resolved', 2]);
+});
+
 test('a late answer to an ask the session withdrew, or the catalog cancelled, says it was withdrawn and why', async () => {
   const path = `/sessions/${k('review:monorepo')}/asks/a-1`;
   deps.sessionSays = { withdrawn: 'superseded' };

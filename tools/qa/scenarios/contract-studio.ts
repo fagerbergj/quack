@@ -1,13 +1,40 @@
-import { eachView, paneOf, visible, type Scenario } from '../scenario.ts';
+import type { FakeScript } from '../fake-model.ts';
+import type { Locator, Page } from 'playwright';
+import { eachView, paneOf, visible, type Ctx, type Scenario } from '../scenario.ts';
 
 const SCHEDULE = '#/s/contracts%3Aqa-schedule';
 const SDK = '#/s/contracts%3Aqa-sdk';
 const DRAFT = '#/s/contracts%3Aqa-draft';
 
+const text = (m?: { content?: unknown }) => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''));
+const no = { choice: 'no', confidence: 1, reason: 'No field, status code or schema rule in the document carries it.' };
+// The model checks an approve runs fail every guarantee, single ("Decision:") or batched ("Evidence:"); any other turn just answers.
+const script: FakeScript = ({ messages = [] }) => {
+  const asked = text(messages.at(-1));
+  if (asked.startsWith('Decision:')) return { content: JSON.stringify(no) };
+  if (asked.startsWith('Evidence:')) return { content: JSON.stringify(Object.fromEntries([...asked.matchAll(/^- (q\d+):/gm)].map(([, id]) => [id, no]))) };
+  return { content: 'Noted.' };
+};
+
+// Presses Approve on the schedule contract's bar at 1280 px, then `button` in the sheet; `after` checks what the page shows.
+async function approveSchedule(ctx: Ctx, button: string, after: (page: Page, bar: Locator) => Promise<void>) {
+  const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${ctx.url}/${SCHEDULE}`);
+    const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
+    await bar.getByRole('button', { name: 'Approve' }).click();
+    await page.getByRole('dialog', { name: 'Approve v2?' }).getByRole('button', { name: button }).click();
+    await after(page, bar);
+  } finally {
+    await context.close();
+  }
+}
+
 // Two seeded contracts, each with version 1 approved and version 2 passed and waiting for approval, and one with no version and a question waiting.
 const scenario: Scenario = {
   name: 'contract-studio',
-  stack: { seed: 'contracts', apps: ['contracts'] },
+  stack: { seed: 'contracts', apps: ['contracts'], script },
   async run(ctx) {
     await eachView(ctx, 'contract beside the chat, changes since v1 highlighted, approvable', async (page, label) => {
       await page.goto(`${ctx.url}/${SCHEDULE}`);
@@ -138,21 +165,29 @@ const scenario: Scenario = {
         await context.close();
       }
     });
-    await ctx.step('approving the waiting version records it', async () => {
-      const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
-      try {
-        const page = await context.newPage();
-        await page.goto(`${ctx.url}/${SCHEDULE}`);
-        const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
-        await bar.getByRole('button', { name: 'Approve' }).click();
-        await page.getByRole('dialog', { name: 'Approve v2?' }).getByRole('button', { name: 'Approve v2' }).click();
-        await visible(page.getByRole('button', { name: 'Version: v2, approved' }));
-        await visible(bar.getByText('v2 is approved'));
-        await ctx.shot(page, 'studio-approved-1280');
-      } finally {
-        await context.close();
-      }
-    });
+    await ctx.step('approving the waiting version runs the model checks, and their findings hold it open', () => approveSchedule(ctx, 'Approve v2', async (page, bar) => {
+      await bar.getByRole('button', { name: 'Model checks failed' }).waitFor({ timeout: 60_000 });
+      if (await page.getByRole('button', { name: 'Version: v2, approved' }).count()) throw new Error('v2 was approved over failing checks');
+    }));
+    await eachView(ctx, 'the approval with findings: failing items first, Approve anyway and Send to the agent', async (page, label) => {
+      await page.goto(`${ctx.url}/${SCHEDULE}`);
+      const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
+      await visible(bar.getByRole('button', { name: 'Model checks failed' }));
+      await ctx.shot(page, `studio-findings-bar-${label}`);
+      await bar.getByRole('button', { name: 'Model checks failed' }).click();
+      const sheet = page.getByRole('dialog', { name: 'Approve v2?' });
+      await visible(sheet.getByRole('heading', { name: 'Model checks' }));
+      await visible(sheet.getByText('The revision must fix'));
+      if (await sheet.getByRole('button', { name: 'Approve v2' }).count()) throw new Error('a plain approve is offered over the findings');
+      await visible(sheet.getByRole('button', { name: 'Approve anyway' }));
+      await visible(sheet.getByRole('button', { name: 'Send to the agent' }));
+      await ctx.shot(page, `studio-findings-sheet-${label}`);
+    }, [{ width: 1280, height: 800 }, { width: 390, height: 800 }]);
+    await ctx.step('Approve anyway records the waiting version over the findings', () => approveSchedule(ctx, 'Approve anyway', async (page, bar) => {
+      await visible(page.getByRole('button', { name: 'Version: v2, approved' }));
+      await visible(bar.getByText('v2 is approved'));
+      await ctx.shot(page, 'studio-approved-1280');
+    }));
   },
 };
 export default scenario;
