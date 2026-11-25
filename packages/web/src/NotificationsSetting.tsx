@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { disablePush, enablePush, pushState, testPush, type PushState } from './push.ts';
+import { disablePush, enablePush, PushError, pushState, testPush, type PushState } from './push.ts';
 
 const btn = 'min-h-11 cursor-pointer rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:cursor-default disabled:opacity-50';
 
@@ -14,18 +14,18 @@ const NOTE: Record<PushState, string> = {
 export function NotificationsSetting() {
   const [state, setState] = useState<PushState>();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<PushError>();
   useEffect(() => {
     pushState().then(setState, () => setState('unsupported'));
   }, []);
   const run = async (job: () => Promise<PushState | void>) => {
     setBusy(true);
-    setError('');
+    setError(undefined);
     try {
       const next = await job();
       if (next) setState(next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong.');
+      setError(err instanceof PushError ? err : new PushError('Something went wrong', err instanceof Error ? err.message : String(err)));
     } finally {
       setBusy(false);
     }
@@ -43,7 +43,13 @@ export function NotificationsSetting() {
           </>
         )}
       </div>
-      {error && <p role="alert" className="m-0 mt-2 text-[13.5px] text-danger [overflow-wrap:anywhere]">{error}</p>}
+      {error && (
+        <div role="alert" title={error.detail} className="mt-2 flex flex-wrap items-center gap-2 text-[13.5px] text-danger">
+          <span aria-hidden="true">{error.message}</span>
+          <span className="sr-only">{`${error.message}. ${error.detail}`}</span>
+          {error.signIn && <button type="button" onClick={() => location.reload()} className={btn}>Reload</button>}
+        </div>
+      )}
     </fieldset>
   );
 }
