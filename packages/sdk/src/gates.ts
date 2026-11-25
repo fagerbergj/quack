@@ -9,7 +9,7 @@ import { onWaiting, waitingNow } from './signals.ts';
 export type GatePoint = 'tool.call.before' | 'generation.before' | 'turn.ended' | 'artifact.sealed' | 'approval.approving';
 
 /** Pass (its note is shown to whoever sealed), deny (the call fails and the run ends), or continue (the call fails with the feedback to act on).
- * At approval.approving, continue reopens the approval with findings, deny as undecided (a plain approve reruns); `detail` is kept on it. */
+ * At approval.approving, continue rejects the approval by the checks, the feedback its reason; deny reopens it undecided; `detail` is kept. */
 export type GateVerdict = { kind: 'pass'; note?: string; detail?: JsonValue } | { kind: 'deny'; reason: string } | { kind: 'continue'; feedback: string; detail?: JsonValue };
 
 /** What each wired point's event carries: the sealed version, or the approval a person just approved, before their verdict is recorded. */

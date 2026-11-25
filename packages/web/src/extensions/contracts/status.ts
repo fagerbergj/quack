@@ -31,6 +31,7 @@ export function contractOf(row: Row, rec?: ContractRecord): Contract {
   const base: Base = { key: row.key, name: rec?.title ?? row.title ?? 'New contract', ...(rec && { kind: KINDS[rec.kind] ?? KINDS.rest! }), version: rec?.draft, approved: false, at: Date.parse(row.lastActivity) || 0 };
   if (rec?.pendingApproval) return { ...base, version: rec.proposed ?? rec.draft, mark: 'need', status: 'Awaiting your approval', rank: 0 };
   if (row.pendingAsks) return { ...base, mark: 'need', status: 'Waiting on you', rank: 0 };
+  if (row.checkingAsks) return { ...base, version: rec?.proposed ?? rec?.draft, mark: 'draft', status: 'Approving…', rank: 1 };
   if (row.state === 'running') return { ...base, mark: 'draft', status: 'Drafting', rank: 1 };
   if (row.failures.length) return { ...base, mark: 'bad', status: 'Run failed', rank: 2 };
   return settled(base, rec);
@@ -57,6 +58,8 @@ export const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args
 export const standOf = (statuses: Map<number, VersionStatus>) => (a: SealedArtifact, approvals: Approval[]): Stand => {
   const s = statuses.get(a.version) ?? 'draft';
   const state = s === 'draft' && approvals.some((p) => offered(p) === a.version) ? 'proposed' : s;
+  // An approve being checked needs no one, so its version carries no needs-you mark.
+  if (state === 'proposed' && approvals.some((p) => offered(p) === a.version && p.approving)) return { state, mark: 'draft', status: 'approving' };
   return { state, ...(state === 'draft' && a.verdict?.passed === false ? verdictMark(a.verdict) : STANDING[state]) };
 };
 

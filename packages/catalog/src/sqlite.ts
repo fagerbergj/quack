@@ -1,6 +1,6 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { Param } from './compile.ts';
-import { FTS_TABLES, sqlStore, tablesDdl, type Driver, type Sql } from './sql-store.ts';
+import { CHECKING_ASKS, FTS_TABLES, sqlStore, tablesDdl, type Driver, type Sql } from './sql-store.ts';
 import type { SessionCatalogStore } from './port.ts';
 
 // Append-only: a released migration is never edited. The applied count lives in user_version.
@@ -13,6 +13,7 @@ const MIGRATIONS = [
       insert into catalog_${t}_fts (catalog_${t}_fts, rowid, fts_text) values ('delete', old.rowid, old.fts_text);
       insert into catalog_${t}_fts (rowid, fts_text) values (new.rowid, new.fts_text);
     end`)].join(';\n'),
+  CHECKING_ASKS('integer'),
 ];
 
 const REGEX_CACHE_MAX = 256;

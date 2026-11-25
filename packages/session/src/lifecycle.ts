@@ -38,7 +38,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const ev = (id: string, type: string, at: number, data: Record<string, unknown>): Logical => ({ id, type, at: iso(at), data: JSON.parse(JSON.stringify(data)) as JsonObject });
 
 const principal = (by: Principal | string): JsonObject => {
-  if (typeof by !== 'string') return by.kind === 'person' ? { kind: 'person', id: by.name } : { kind: 'tailnet' };
+  if (typeof by !== 'string') return by.kind === 'person' ? { kind: 'person', id: by.name } : { kind: by.kind };
   return by === 'tailnet' ? { kind: 'tailnet' } : { kind: 'person', id: by };
 };
 
@@ -56,13 +56,15 @@ function runEvents(runs: RunRecord[]): Logical[] {
 }
 
 // A withdrawn approval is cancelled under the same event id a run's end uses, dated when it was withdrawn and in the run open then.
+// An approve the gates check holds the ask (`held`) until they end; it waits on no one meanwhile.
 function approvalEvents(id: string, a: Approval, cancelledBy: Map<string, number>, runs: RunRecord[]): Logical[] {
-  const opened = ev(`ask:open:${id}`, 'ask.opened', a.requestedAt, approvalOpenedData(id, a.tool, a.args, a.requestedAt));
+  const checked = a.approving ?? a.checks;
+  const opened = [ev(`ask:open:${id}`, 'ask.opened', a.requestedAt, approvalOpenedData(id, a.tool, a.args, a.requestedAt)), ...(checked ? [ev(`ask:hold:${id}`, 'ask.held', checked.at, { id, held: !!a.approving })] : [])];
   const v = a.verdict;
-  if (v) return [opened, ev(`ask:resolve:${id}`, 'ask.resolved', v.at, { id, choice: v.decision, ...(v.reason !== null && { reason: v.reason }), by: principal(v.by) })];
+  if (v) return [...opened, ev(`ask:resolve:${id}`, 'ask.resolved', v.at, { id, choice: v.decision, ...(v.reason !== null && { reason: v.reason }), by: principal(v.by) })];
   const w = a.withdrawn;
   const run = cancelledBy.get(id) ?? (w ? (runs.findLast((r) => r.startedAt <= w.at)?.n ?? 1) : undefined);
-  return run === undefined ? [opened] : [opened, ev(`ask:cancel:${id}`, 'ask.cancelled', cancelledBy.has(id) ? a.requestedAt : w!.at, { id, run })];
+  return run === undefined ? opened : [...opened, ev(`ask:cancel:${id}`, 'ask.cancelled', cancelledBy.has(id) ? a.requestedAt : w!.at, { id, run })];
 }
 
 function questionEvents(id: string, q: Question, lastRun: number): Logical[] {

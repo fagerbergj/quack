@@ -71,6 +71,7 @@ const ROUTES: Array<[string, RegExp, (m: RegExpExecArray, q: URLSearchParams) =>
   ['GET', /^\/asks$/, (_, q) => [200, page('asks', asks, q)]],
   ['GET', /^\/sessions\/([^/]+)\/asks$/, ([, k], q) => [200, page('asks', asks.filter((a) => a.session === k), q)]],
   ['PATCH', /^\/sessions\/[^/]+\/asks\/ap9$/, () => [409, { title: 'Conflict', status: 409, detail: 'the ask is not pending' }]],
+  ['PATCH', /^\/sessions\/[^/]+\/asks\/held$/, () => [200, { id: 'held', state: 'checking' }]],
   ['PATCH', /^\/sessions\/[^/]+\/asks\/([^/]+)$/, ([, id]) => [200, { ...asks.find((a) => a.id === id), state: 'resolved' }]],
   ['GET', /^\/artifacts$/, (_, q) => [200, page('artifacts', sealed.map(({ content: _c, ...meta }) => meta), q)]],
   ['GET', /^\/sessions\/[^/]+\/artifacts$/, (_, q) => [200, page('artifacts', artifactsFor(q.get('q') ?? ''), q)]],
@@ -206,6 +207,10 @@ describe('quack', () => {
       ['PATCH', '/sessions/ui:b/asks/ap1', { resolution: { choice: 'reject', reason: 'flagged' } }],
     ]);
     assert.equal((await cli(['answer', 'ui:b', 'q1'])).code, 1);
+  });
+
+  it('an approve the session checks first says so', async () => {
+    assert.equal((await cli(['approve', 'ui:b', 'held'])).stdout.trim(), 'checking: approved once its checks pass, else sent back to the agent with what they found');
   });
 
   it('answer prints the problem detail when the ask is not pending', async () => {

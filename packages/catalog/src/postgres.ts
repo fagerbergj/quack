@@ -1,6 +1,6 @@
 import pg from 'pg';
 import type { Param } from './compile.ts';
-import { FTS_TABLES, sqlStore, tablesDdl, type Driver, type Sql } from './sql-store.ts';
+import { CHECKING_ASKS, FTS_TABLES, sqlStore, tablesDdl, type Driver, type Sql } from './sql-store.ts';
 import type { SessionCatalogStore } from './port.ts';
 
 // Append-only: a released migration is never edited. "C" collation orders text by code point, as SQLite does.
@@ -8,6 +8,7 @@ const MIGRATIONS = [
   [tablesDdl({ text: 'text collate "C"', int: 'bigint' }), ...FTS_TABLES.map((t) => `
     alter table catalog_${t} add column fts tsvector generated always as (to_tsvector('simple', fts_text)) stored;
     create index catalog_${t}_fts on catalog_${t} using gin (fts)`)].join(';\n'),
+  CHECKING_ASKS('bigint'),
 ];
 
 const MIGRATION_LOCK = 7462;

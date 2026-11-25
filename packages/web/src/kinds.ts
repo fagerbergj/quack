@@ -36,6 +36,8 @@ export function look(r: Row): Look {
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown(r, w) };
 }
 
+/** How a session reads while a person's approve is being checked: terse on screen, the why in its tooltip. */
+export const APPROVING = { line: 'Approving…', tone: 'muted' as const, why: "Making sure it does what it says before it's approved; nothing needs you" };
 const INTERRUPTED = { line: 'Interrupted', tone: 'muted' as const, why: 'The last run stopped before it finished; it resumes on the next message' };
 // No outcome after activity: the newest run started (which clears lastRun) and its process stopped before it ended.
 const interrupted = (r: Row) => r.state !== 'running' && !r.lastRun && Date.parse(r.lastActivity) > Date.parse(r.createdAt);
@@ -44,6 +46,7 @@ function shown(r: Row, w: Words | undefined): Pick<Look, 'line' | 'tone' | 'wait
   const failure = r.failures[0];
   if (failure) return { line: failedLine(failure), tone: 'bad' };
   if (r.pendingAsks) return { line: waiting(r.pendingAsks), tone: 'warn' };
+  if (r.checkingAsks) return APPROVING;
   if (r.waiting && (r.state === 'running' || r.waiting.error)) return { line: 'Waiting…', tone: 'muted', wait: r.waiting };
   if (interrupted(r)) return INTERRUPTED;
   return w ? state(r, w) : { line: r.agent, tone: 'muted' };

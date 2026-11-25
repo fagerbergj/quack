@@ -73,7 +73,7 @@ test('the session list is one keyset page of v8 rows: Money as a decimal string,
   assert.deepEqual(rows.map((r) => r.key), ['review:monorepo', 'sleeper:platinum:2']);
   assert.deepEqual(rows[1], {
     key: 'sleeper:platinum:2', agent: 'quack', title: 'Title 1', state: 'idle', createdAt: '2026-11-01T00:00:00.001Z', lastActivity: '2026-11-01T00:00:00.001Z',
-    cost: { currencyCode: 'USD', amountMicros: '9007199254740993' }, tokens: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, pendingAsks: 0,
+    cost: { currencyCode: 'USD', amountMicros: '9007199254740993' }, tokens: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, pendingAsks: 0, checkingAsks: 0,
   });
   const next = await call('GET', `/sessions?pageSize=2&orderBy=createdAt&pageToken=${first.body.nextPageToken}`);
   assert.deepEqual((next.body.sessions as Array<{ key: string }>).map((r) => r.key), ['sleeper:platinum:1']);
@@ -157,11 +157,14 @@ test('asks: the needs-you list, one ask, and a nested resolution filled from the
   assert.equal((await call('GET', `/sessions/${k('review:monorepo')}/asks/nope`)).status, 404);
 });
 
-test('an approve the session holds for its checks leaves the ask pending; a second answer still reaches the session', async () => {
+test('an approve the session holds for its checks reads checking and waits on no one; a second answer still reaches the session', async () => {
   const path = `/sessions/${k('review:monorepo')}/asks/a-1`;
   deps.sessionSays = { held: true };
   const held = await call('PATCH', path, { body: { resolution: { choice: 'approve' } } });
-  assert.deepEqual([held.status, held.body.state], [200, 'pending']);
+  assert.deepEqual([held.status, held.body.state], [200, 'checking']);
+  await catalog.publish('review:monorepo', [ev(8, 'ask.held', { id: 'a-1', held: true })]);
+  const row = (await call('GET', `/sessions/${k('review:monorepo')}`)).body;
+  assert.deepEqual([(await call('GET', path)).body.state, row.pendingAsks, row.checkingAsks], ['checking', 0, 1]);
   deps.sessionSays = true;
   const again = await call('PATCH', path, { body: { resolution: { choice: 'approve', reason: 'over the findings' } } });
   assert.deepEqual([again.status, again.body.state, deps.answered.length], [200, 'resolved', 2]);

@@ -24,7 +24,7 @@ An item's arms run one after another, never at once; `--concurrency` runs that m
 
 Each recorded input is sent once the run before it settles.
 
-The replay answers the run's asks: a question takes the item's next recorded answer when it is one of the options (or free text where the question takes it), else its suggested option; an approval takes the item's next recorded verdict, and the replay stops at the first approval past them. An approve the session holds for a judged version's approve-time checks reopens the approval when those checks fail or cannot run, and the replay answers it again with the next recorded verdict.
+The replay answers the run's asks: a question takes the item's next recorded answer when it is one of the options (or free text where the question takes it), else its suggested option; an approval takes the item's next recorded verdict, and the replay stops at the first approval past them. An approve the session holds for a judged version's approve-time checks becomes a rejection by the checks when they fail; when they cannot run it reopens the approval, and the replay answers it again with the next recorded verdict.
 
 `--suggested` drops the recorded answers, and `--verdict approve|stop|reject:<reason>`, repeated, replaces the recorded verdicts; a contracts review round is a rejection whose reason carries the review's `quack-review` block.
 

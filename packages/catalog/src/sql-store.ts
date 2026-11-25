@@ -17,11 +17,13 @@ export type Driver = QueryDialect & {
 };
 
 const SESSION_COLS = 's.key, s.incarnation, s.agent, s.title, s.default_title, s.custom_title, s.state, s.created_at, s.last_activity, s.currency, cast(s.cost_micros as text) as cost_text, '
-  + 's.tokens_input, s.tokens_output, s.tokens_cache_read, s.tokens_cache_write, s.pending_asks, s.oldest_ask_at, s.last_outcome, s.last_ended_at, s.failed_steps, s.last_message, s.watermark';
+  + 's.tokens_input, s.tokens_output, s.tokens_cache_read, s.tokens_cache_write, s.pending_asks, s.checking_asks, s.oldest_ask_at, s.last_outcome, s.last_ended_at, s.failed_steps, s.last_message, s.watermark';
 const ASK_COLS = 'a.session, a.id, a.type, a.state, a.created_at, a.resolved_at, a.resolution, a.tool, a.args, a.prompt';
 const ARTIFACT_COLS = 'r.session, r.kind, r.version, r.hash, r.content, r.sealed_at, r.summary, r.deliveries';
 
 const num = (v: unknown) => Number(v);
+// The ask states an answer may still land in.
+const OPEN = ['pending', 'checking'];
 const opt = (v: unknown) => (v === null || v === undefined ? undefined : v);
 const json = (v: unknown) => (v === null || v === undefined ? undefined : JSON.parse(String(v)));
 
@@ -30,7 +32,7 @@ function sessionRow(r: Row): SessionRow {
     key: String(r.key), agent: String(r.agent), ...(opt(r.title) !== undefined && { title: String(r.title) }), state: r.state as SessionState,
     createdAt: num(r.created_at), lastActivity: num(r.last_activity), cost: { currencyCode: String(r.currency), amountMicros: BigInt(String(r.cost_text)) },
     tokens: { input: num(r.tokens_input), output: num(r.tokens_output), cacheRead: num(r.tokens_cache_read), cacheWrite: num(r.tokens_cache_write) },
-    pendingAsks: num(r.pending_asks), ...(opt(r.oldest_ask_at) !== undefined && { oldestAskAt: num(r.oldest_ask_at) }),
+    pendingAsks: num(r.pending_asks), checkingAsks: num(r.checking_asks), ...(opt(r.oldest_ask_at) !== undefined && { oldestAskAt: num(r.oldest_ask_at) }),
     ...(opt(r.last_outcome) !== undefined && { lastRun: { outcome: r.last_outcome as RunOutcome, endedAt: num(r.last_ended_at), failedSteps: json(r.failed_steps) ?? [] } }),
     ...(opt(r.last_message) !== undefined && { lastMessage: String(r.last_message) }),
   };
@@ -100,7 +102,8 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
     .then(([r]) => sql.run('update catalog_sessions set fts_text = ? where key = ?', [ftsText(opt(r!.title) as string, key, opt(r!.last_message) as string), key]));
   const recount = (sql: Sql, key: string) => sql.run(
     `update catalog_sessions set pending_asks = (select count(*) from catalog_asks a where a.session = ? and a.state = 'pending'),
-       oldest_ask_at = (select min(a.created_at) from catalog_asks a where a.session = ? and a.state = 'pending') where key = ?`, [key, key, key]);
+       checking_asks = (select count(*) from catalog_asks a where a.session = ? and a.state = 'checking'),
+       oldest_ask_at = (select min(a.created_at) from catalog_asks a where a.session = ? and a.state = 'pending') where key = ?`, [key, key, key, key]);
 
   async function move(sql: Sql, row: Row, to: SessionState, repeat: boolean, rule = nextState) {
     const from = row.state as SessionState;
@@ -228,7 +231,7 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
     openAsk(w, ask) {
       return onEvent(ask.key, w, undefined, async (sql, row) => {
         const old = await loadAsk(sql, ask.key, ask.id);
-        if (old && old.state !== 'pending') return;
+        if (old && !OPEN.includes(String(old.state))) return;
         const values = [ask.type, ask.createdAt, ask.toolCall?.tool ?? null, ask.toolCall ? JSON.stringify(ask.toolCall.args) : null, ask.prompt ? JSON.stringify(ask.prompt) : null, ftsText(ask.prompt?.question, ask.toolCall?.tool)];
         await sql.run(`insert into catalog_asks (session, id, state, type, created_at, tool, args, prompt, fts_text) values (?, ?, 'pending', ?, ?, ?, ?, ?, ?)
           on conflict (session, id) do update set type = excluded.type, created_at = excluded.created_at, tool = excluded.tool, args = excluded.args, prompt = excluded.prompt, fts_text = excluded.fts_text`,
@@ -242,7 +245,7 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
     resolveAsk(w, c) {
       return onWrite(c.key, w, { applied: false } as { applied: boolean; ask?: AskRow }, async (sql, _row, repeat) => {
         const ask = await loadAsk(sql, c.key, c.id);
-        if (!ask || repeat || ask.state !== 'pending') return { applied: false, ...(ask && { ask: askRow(ask) }) };
+        if (!ask || repeat || !OPEN.includes(String(ask.state))) return { applied: false, ...(ask && { ask: askRow(ask) }) };
         const resolution: { by: Principal; choice: string; text?: string; reason?: string } = { by: c.by, choice: c.choice, ...(c.text !== undefined && { text: c.text }), ...(c.reason !== undefined && { reason: c.reason }) };
         await sql.run("update catalog_asks set state = 'resolved', resolved_at = ?, resolution = ? where session = ? and id = ?", [c.resolvedAt, JSON.stringify(resolution), c.key, c.id]);
         await recount(sql, c.key);
@@ -252,7 +255,14 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
 
     cancelAsk(w, { key, id }) {
       return onEvent(key, w, undefined, async (sql) => {
-        await sql.run("update catalog_asks set state = 'cancelled' where session = ? and id = ? and state = 'pending'", [key, id]);
+        await sql.run("update catalog_asks set state = 'cancelled' where session = ? and id = ? and state in ('pending', 'checking')", [key, id]);
+        await recount(sql, key);
+      });
+    },
+
+    holdAsk(w, { key, id, held }) {
+      return onEvent(key, w, undefined, async (sql) => {
+        await sql.run('update catalog_asks set state = ? where session = ? and id = ? and state = ?', [held ? 'checking' : 'pending', key, id, held ? 'pending' : 'checking']);
         await recount(sql, key);
       });
     },
@@ -321,3 +331,6 @@ export function tablesDdl(types: { text: string; int: string }): string {
 }
 
 export const FTS_TABLES = ['sessions', 'asks', 'artifacts'] as const;
+
+/** Migration 2: the count of asks whose answer is being checked. */
+export const CHECKING_ASKS = (int: string) => `alter table catalog_sessions add column checking_asks ${int} not null default 0`;

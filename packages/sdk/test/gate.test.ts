@@ -73,7 +73,17 @@ test("a person's approve of a subject runs the approval gates first; a pass reco
   assert.deepEqual([saw, counts()], ['1', { watched: 0, stopped: 0, ran: 1 }]);
 });
 
-test('resolveApproval holds an approve of a subject for the gates, refuses a second one meanwhile, and records one over failed checks', async () => {
+test("a gate that finds problems at approval.approving rejects the approval by the checks, with the findings, never by the approver", async (t) => {
+  t.after(gate('approval.approving', async () => ({ kind: 'continue', feedback: 'v1 misses the intent' })));
+  const { tool, api, counts } = setup(asked({ approving: { decision: 'approve', reason: null, by: jf, at: 5 } }));
+  const res = await tool.execute({ body: 'hi' } as never, api as never, ctx);
+  const row = (await api.watchDoc()).value.items['1']!;
+  assert.deepEqual([row.verdict?.decision, row.verdict?.by, row.verdict?.reason, row.approving], ['reject', { kind: 'checks' }, 'v1 misses the intent', null]);
+  assert.deepEqual([res.isError, (res.output?.[0] as { text: string }).text], [true, 'Not approved: the checks found problems:\nv1 misses the intent']);
+  assert.equal(counts().ran, 0);
+});
+
+test('resolveApproval holds an approve of a subject for the gates, refuses a second one meanwhile, and reruns the checks over an old failure', async () => {
   const doc = { items: { a: asked(), b: asked({ checks: { at: 2, passed: false, decided: true, feedback: ['no'], detail: null } }), c: asked({ subject: null }) } as Record<string, Approval> };
   const conversation = { id: 'c', commit: async <T>(fn: (tx: { doc: () => Promise<typeof doc> }) => Promise<T>) => fn({ doc: async () => doc }) };
   const approve = (id: string) => resolveApproval(conversation as never, id, { decision: 'approve', by: jf }, ctx);
@@ -82,7 +92,7 @@ test('resolveApproval holds an approve of a subject for the gates, refuses a sec
   assert.equal(await approve('a'), false, 'an approve being checked is not decided again');
   assert.equal(await resolveApproval(conversation as never, 'a', { decision: 'reject', reason: 'no', by: jf }, ctx), true, 'a reject still lands');
   assert.equal(await approve('b'), true);
-  assert.equal(doc.items.b.verdict?.decision, 'approve', 'the person approves over the findings');
+  assert.deepEqual([doc.items.b.verdict, doc.items.b.approving?.decision], [null, 'approve'], 'a failure recorded before checks rejected is checked again');
   assert.equal(await approve('c'), true);
   assert.equal(doc.items.c.verdict?.decision, 'approve', 'an approval with no subject is recorded at once');
 });

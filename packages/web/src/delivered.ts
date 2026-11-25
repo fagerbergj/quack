@@ -30,8 +30,8 @@ const NO_STANDING = new Map<string, StandOf>();
  * they arrive, and `markOf` falls back to the verdict. Read again when a version is sealed, an approval opens or closes, or a run starts or ends. */
 export function useStanding(sessionKey: string, items: SealedArtifact[], approvals: Approval[], running: boolean) {
   const kinds = [...new Set(items.map((a) => a.kind))];
-  // The approvals come as a new array every render; only which are open re-reads and re-marks, so transcript rows stay put.
-  const open = approvals.map((p) => p.id).join();
+  // The approvals come as a new array every render; only which are open, and which are being approved, re-reads and re-marks, so transcript rows stay put.
+  const open = approvals.map((p) => (p.approving ? `${p.id}:approving` : p.id)).join();
   const { data } = useLoad(async () => {
     const read = await Promise.all(kinds.flatMap((k) => EXTENSIONS.map((e) => e.standing?.(sessionKey, k)?.then((f) => (f ? [[k, f] as const] : [])) ?? [])));
     const owned = read.flat();

@@ -46,7 +46,7 @@ export type Version = { a: SealedArtifact; n: number };
 export type StatusOf = (v: Version) => Stand & { state: VersionStatus };
 
 /** The status line: what is going on (`title`) and whether anything waits on the person (`sub`); `can` when the newest version is up for approval. */
-export type State = { can: boolean; done?: boolean; title: string; sub?: string; detail?: string };
+export type State = { can: boolean; done?: boolean; title: string; sub?: string; detail?: string; /** The title's longer reading, for its tooltip. */ why?: string };
 type Rejection = NonNullable<Ask['resolution']>;
 const NO_ASKS: Ask[] = [];
 
@@ -72,21 +72,40 @@ function waiting({ name, verdict, status, running, approved }: Standing): State 
   return running ? { can: false, title: `The agent is drafting ${name}`, sub: `Nothing waits on you${yet}` } : { can: false, title: `${name} is a draft`, sub: 'Not up for approval · send a message and the agent goes on' };
 }
 
+/** What a rejection by the checks found, from the judge's "- missed criterion.id (k of n): note; note" lines: a share counts its misses. */
+export function problemsOf(reason = '') {
+  const lines = reason.split('\n').flatMap((l) => {
+    const m = /^- \w+ [\w.]+(?: \((\d+) of (\d+)\))?(?:: (.+))?$/.exec(l);
+    return m ? [{ count: m[2] ? Number(m[2]) - Number(m[1]) : 1, notes: m[3]?.split('; ') ?? [l.slice(2)] }] : [];
+  });
+  return { count: lines.reduce((n, l) => n + l.count, 0), sentences: lines.flatMap((l) => l.notes) };
+}
+
+// A version the checks turned down on the person's approve: the agent revises it with no step from them.
+function notApproved(name: string, running: boolean, reason?: string): State {
+  const { count, sentences } = problemsOf(reason);
+  const found = count ? `${count} ${count === 1 ? 'problem' : 'problems'} found` : 'problems found';
+  return { can: false, title: `${name} wasn't approved: ${found}`, sub: running ? 'The agent is revising it · nothing needs you' : 'Nothing needs you', detail: (sentences.length ? sentences.join('\n') : reason)?.split('\n').slice(0, 3).join('\n') };
+}
+
 /** Where the newest version stands, as one status line for every state. Only a version the judge passed is ever put up for approval. */
 export function approvalState(s: Standing & { isApproved: boolean }): State {
   const { name, running, rejection } = s;
   if (s.isApproved) return { can: false, done: true, title: `${name} is approved`, sub: running ? 'The agent is working · nothing waits on you' : 'Nothing in progress · nothing waits on you' };
+  if (s.status === 'changes_requested' && rejection?.by.kind === 'checks') return notApproved(name, running, rejection.reason);
   if (s.status === 'changes_requested') {
     const who = !rejection ? 'someone' : rejection.by.kind === 'person' ? rejection.by.id : 'a reviewer';
     return { can: false, title: `Changes asked for ${name}`, sub: `Asked by ${who}${running ? ' · the agent is revising it' : ''} · nothing waits on you`, detail: rejection?.reason && reasonText(rejection.reason).split('\n').filter(Boolean).slice(0, 2).join('\n') };
   }
-  if (s.proposal?.approving) return { can: false, title: `Checking ${name}`, sub: 'Running the model checks on your approve' };
+  if (s.proposal?.approving) return { can: false, title: `Approving ${name}…`, sub: 'Nothing needs you', why: `Making sure ${name} does what it says before it's approved` };
   const held = s.proposal?.checks;
-  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: held ? heldLabel(held) : 'Checks passed' };
+  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: held && unchecked(held) ? heldLabel(name) : 'Checks passed' };
   return waiting(s);
 }
 
 const short = (v: Version) => `v${v.n}`;
+// Only checks that could not run leave an approval open; a failure from before failures rejected is approved again plainly.
+const couldNotCheck = (p?: Approval) => (p?.checks && unchecked(p.checks) ? p.checks : undefined);
 
 /** A version's spec: the newest is already in hand, an older one is loaded on demand (`wait` says how that stands). */
 function useSpec(sessionKey: string, v: Version | undefined, newest: Version, spec: ContractSpec): { spec?: ContractSpec; wait: Content } {
@@ -113,10 +132,10 @@ function useItems(diff: Diff | undefined, spec: ContractSpec | undefined, found:
 
 const link = 'min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap underline-offset-2 hover:underline focus-ring';
 
-// What the model checks an approve ran said, on a row of its own: in the title's column a phone's buttons squeeze it under the bar's edge.
-function HeldLine({ checks, onOpen }: { checks: NonNullable<Pending['checks']>; onOpen: () => void }) {
-  const why = unchecked(checks) ? checks.feedback.join(' ') : 'The model checks your approve ran found problems';
-  return <button type="button" onClick={onOpen} title={why} aria-description={why} className={`${link} ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{heldLabel(checks)}</button>;
+// Checks that could not run, on a row of its own: in the title's column a phone's buttons squeeze it under the bar's edge.
+function HeldLine({ name, checks, onOpen }: { name: string; checks: NonNullable<Pending['checks']>; onOpen: () => void }) {
+  const why = checks.feedback.join(' ');
+  return <button type="button" onClick={onOpen} title={why} aria-description={why} className={`${link} text-warning`}>{heldLabel(name)}</button>;
 }
 
 // Review, with draft comments in hand, else Ask for changes.
@@ -127,10 +146,10 @@ function AskButton({ onAsk }: { onAsk: () => void }) {
 }
 
 // What is going on, and beneath it the checks that passed (opening them) or whether anything waits on the person.
-function StatusLine({ title, sub, onChecks }: { title: string; sub?: string; onChecks?: () => void }) {
+function StatusLine({ title, sub, why, onChecks }: { title: string; sub?: string; why?: string; onChecks?: () => void }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <p role="status" className="m-0 text-[15px] leading-snug font-semibold text-ink [overflow-wrap:anywhere]">{title}</p>
+      <p role="status" title={why} aria-description={why} className="m-0 text-[15px] leading-snug font-semibold text-ink [overflow-wrap:anywhere]">{title}</p>
       {onChecks ? <button type="button" onClick={onChecks} className={`${link} text-link`}>Checks passed</button> : sub && <p className="m-0 text-[13px] text-muted">{sub}</p>}
     </div>
   );
@@ -146,10 +165,10 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
   return (
     <section aria-label="Approval" className="sticky bottom-0 z-10 -mx-4 mt-auto flex flex-col gap-1 border-t border-line bg-canvas/95 px-4 pt-2.5 pb-[max(0.625rem,var(--safe-b))] backdrop-blur sm:-mx-5 sm:px-5">
       <div className="flex items-center gap-2">
-        <StatusLine title={state.title} sub={held ? undefined : state.sub} onChecks={checks ? () => setSheet('checks') : undefined} />
+        <StatusLine title={state.title} why={state.why} sub={held ? undefined : state.sub} onChecks={checks ? () => setSheet('checks') : undefined} />
         {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
       </div>
-      {held && <HeldLine checks={held} onOpen={() => setSheet('approve')} />}
+      {held && <HeldLine name={pending.name} checks={held} onOpen={() => setSheet('approve')} />}
       {state.can && <DraftsLine />}
       <StrandedLine />
       {state.detail && <p className="m-0 max-h-24 overflow-y-auto text-[13px] whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">{state.detail}</p>}
@@ -219,7 +238,7 @@ function Contract({ sessionKey, versions: all, newest, spec, status, approvals, 
   const marks = useMemo(() => diff && markBreaks(diff.marks, items), [diff, items]);
   const name = short(newest);
   const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest).state, proposal, approved: approvedV && short(approvedV), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
-  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name, checks: proposal?.checks };
+  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name, checks: couldNotCheck(proposal) };
   // Comments are made only on the version up for approval; a sent one's versions are named as the person knows them.
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
   const versionName = useCallback((n: number) => { const v = all.find((x) => x.a.version === n); return v ? short(v) : `#${n}`; }, [all]);

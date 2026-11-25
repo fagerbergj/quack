@@ -25,8 +25,8 @@ export type Approval = {
   subject?: { kind: string; version: number } | null;
   /** A person's approve the gates are still checking; it becomes the verdict once they pass. */
   approving?: Verdict | null;
-  /** What the gates found on the last approve; failed ones leave the approval open, and the next approve is recorded over their findings.
-   * Undecided ones (a gate could not run its checks) are run again by the next approve, unless it gives a reason, which records it over them. */
+  /** What the gates found on the last approve; failed ones reject it, by the checks, with their findings as the reason. Undecided ones (a
+   * gate could not run its checks) leave it open: the next approve runs them again, unless it gives a reason, which records it over them. */
   checks?: ApprovalChecks | null;
 };
 
@@ -89,6 +89,11 @@ function notRun(tool: string, w: Withdrawal): ToolExecutionResult {
   return errorResult(`${tool} was not run: ${withdrawnText(w.reason)}${w.supersededBy ? ` (${w.supersededBy})` : ''}.${again}`);
 }
 
+// What the asking call is told of a rejection: the checks' own findings, or who rejected it and why.
+const rejectedText = (v: Verdict) => (typeof v.by !== 'string' && v.by.kind === 'checks'
+  ? `Not approved: the checks found problems${v.reason ? `:\n${v.reason}` : ''}`
+  : `Rejected by ${principalName(v.by)}${v.reason ? `: ${v.reason}` : ''}`);
+
 function errorResult(text: string): ToolExecutionResult {
   return { output: [{ type: 'text', text }], isError: true };
 }
@@ -108,7 +113,7 @@ async function waitForAnswer(watch: { value: Readonly<ApprovalsDoc> | null; star
   }
 }
 
-// The gates run on a person's approve; a pass records it as the verdict, a failure clears it and keeps the approval open with their findings.
+// The gates run on a person's approve; a pass records it as the verdict, a failure records a rejection by the checks, and an undecided run reopens it.
 async function checkApprove(api: ToolExecutionApi, id: string, asked: Approval, ctx: Context): Promise<Approval> {
   // A chain that threw ran no checks: it is recorded as undecided, so the approval reopens and a plain approve retries. A stopped task
   // can commit nothing more; the session's Stop withdraws its approvals, clearing the held approve.
@@ -120,7 +125,7 @@ async function checkApprove(api: ToolExecutionApi, id: string, asked: Approval, 
     const row = (await tx.doc(Approvals, api.conversationId)).items[id];
     if (row.verdict || row.withdrawn) return plain(row);
     row.checks = plain(checks);
-    row.verdict = checks.passed ? row.approving! : null;
+    row.verdict = checks.passed ? row.approving! : checks.decided ? { decision: 'reject', reason: checks.feedback.join('\n'), by: { kind: 'checks' }, at: checks.at } : null;
     row.approving = null;
     return plain(row);
   }, ctx);
@@ -171,7 +176,7 @@ export function gated<P extends object>(tool: ToolRegistration<P>, opts: GatedOp
       if (!answered) return errorResult('approval state is unavailable');
       if (answered.withdrawn) return notRun(tool.name, answered.withdrawn);
       const verdict = answered.verdict!;
-      if (verdict.decision === 'reject') return errorResult(`Rejected by ${principalName(verdict.by)}${verdict.reason ? `: ${verdict.reason}` : ''}`);
+      if (verdict.decision === 'reject') return errorResult(rejectedText(verdict));
 
       await api.commit(async (tx) => { (await tx.doc(Approvals, api.conversationId)).items[id].executing = true; }, ctx);
       const result = await tool.execute(args, api, ctx);
@@ -188,14 +193,14 @@ export async function pendingApprovals(conversation: Conversation, ctx: Context)
 }
 
 // Records a verdict; returns false when the approval is unknown, already decided or withdrawn, or an approve of it is being checked.
-// An approve of a subject waits for the gates, unless they already failed it, or could not run and the person says why they approve anyway.
+// An approve of a subject waits for the gates, unless they could not run and the person says why they approve anyway.
 export async function resolveApproval(conversation: Conversation, id: string, verdict: { decision: Verdict['decision']; reason?: string; by: Principal }, ctx: Context): Promise<boolean> {
   return conversation.commit(async (tx) => {
     const doc = await tx.doc(Approvals, conversation.id);
     const item = doc.items[id];
     if (!item || item.verdict || item.withdrawn) return false;
     const v: Verdict = { decision: verdict.decision, reason: verdict.reason ?? null, by: verdict.by, at: Date.now() };
-    const over = item.checks && (item.checks.decided !== false || !!verdict.reason);
+    const over = item.checks?.decided === false && !!verdict.reason;
     if (verdict.decision === 'reject' || !item.subject || over) item.verdict = v;
     else if (item.approving) return false;
     else item.approving = v;

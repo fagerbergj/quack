@@ -28,8 +28,8 @@ const optStr = (o: Obj, k: string, what: string) => (o[k] === null ? undefined :
 const strings = (v: unknown) => Array.isArray(v) && v.every((s) => typeof s === 'string');
 
 function principal(v: unknown, what: string) {
-  need(isObj(v) && (v.kind === 'tailnet' || (v.kind === 'person' && typeof v.id === 'string' && v.id !== '')), `${what}.by must be a person with an id or the tailnet`);
-  return (v as Obj).kind === 'person' ? { kind: 'person' as const, id: (v as Obj).id as string } : { kind: 'tailnet' as const };
+  need(isObj(v) && (v.kind === 'tailnet' || v.kind === 'checks' || (v.kind === 'person' && typeof v.id === 'string' && v.id !== '')), `${what}.by must be a person with an id, the tailnet or the checks`);
+  return (v as Obj).kind === 'person' ? { kind: 'person' as const, id: (v as Obj).id as string } : { kind: (v as Obj).kind as 'tailnet' | 'checks' };
 }
 
 function money(v: unknown, what: string) {
@@ -85,6 +85,7 @@ const DATA: Record<CoreEvent['type'], (d: Obj, what: string) => unknown> = {
   },
   'ask.resolved': (d, w) => ({ id: str(d, 'id', w), choice: str(d, 'choice', w), ...(d.text !== undefined && { text: str(d, 'text', w) }), ...(d.reason !== undefined && { reason: str(d, 'reason', w) }), by: principal(d.by, w) }),
   'ask.cancelled': (d, w) => ({ id: str(d, 'id', w), run: int(d, 'run', w) }),
+  'ask.held': (d, w) => (need(typeof d.held === 'boolean', `${w}.held must be a boolean`), { id: str(d, 'id', w), held: d.held }),
   'artifact.sealed': sealed,
   'spend.recorded': (d, w) => ({ cost: money(d.cost, w), tokens: tokens(d.tokens, w) }),
   'title.set': (d, w) => (need(typeof d.title === 'string' && d.title.length <= 120, `${w}.title must be a string of at most 120 characters`), { title: d.title }),

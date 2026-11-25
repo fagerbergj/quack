@@ -17,7 +17,7 @@ const SESSIONS: Record<SessionField, ValueKind> = {
   'cost.currencyCode': 'string', 'cost.amountMicros': 'micros', 'tokens.input': 'int', 'tokens.output': 'int', 'tokens.cacheRead': 'int', 'tokens.cacheWrite': 'int',
   pendingAsks: 'int', oldestAskAt: 'date', 'lastRun.outcome': ['succeeded', 'denied', 'failed', 'aborted'],
 };
-const ASKS: Record<AskField, ValueKind> = { session: 'text', type: ['approval', 'question'], state: ['pending', 'resolved', 'cancelled'], createdAt: 'date', resolvedAt: 'date', tool: 'text' };
+const ASKS: Record<AskField, ValueKind> = { session: 'text', type: ['approval', 'question'], state: ['pending', 'checking', 'resolved', 'cancelled'], createdAt: 'date', resolvedAt: 'date', tool: 'text' };
 const ARTIFACTS: Record<ArtifactField, ValueKind> = { session: 'text', kind: 'text', version: 'int', sealedAt: 'date' };
 const { session: _askSession, ...SESSION_ASKS } = ASKS;
 const { session: _artifactSession, ...SESSION_ARTIFACTS } = ARTIFACTS;

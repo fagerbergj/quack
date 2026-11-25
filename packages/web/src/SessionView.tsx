@@ -22,7 +22,7 @@ import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
 import { MoreIcon } from './MoreIcon.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
-import type { SessionTitle } from './kinds.ts';
+import { APPROVING, type SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { useStanding } from './delivered.ts';
 import { useLoad } from './useLoad.ts';
@@ -191,8 +191,9 @@ type Tone = 'wait' | 'run' | 'idle' | 'fail';
 const TONES: Record<Tone, string> = { wait: 'text-warning', run: 'text-info', idle: '', fail: 'text-danger' };
 
 function StatusText({ text, tone }: { text: string; tone: Tone }) {
+  const why = text === APPROVING.line ? APPROVING.why : undefined;
   return (
-    <span role="status" className={`flex flex-none items-center gap-1.5 ${TONES[tone]}`}>
+    <span role="status" title={why} aria-description={why} className={`flex flex-none items-center gap-1.5 ${TONES[tone]}`}>
       {tone === 'run' && <span aria-hidden="true" className="live-dot h-1.5 w-1.5 rounded-full bg-info" />}
       {text}
     </span>
@@ -300,9 +301,10 @@ function Header({ back, artifact, artifactRef, onDetails, children, ...facts }: 
   );
 }
 
-function statusOf(state: SocketState, waiting: number, running: boolean, failed?: Failure): [string, Tone] {
+function statusOf(state: SocketState, waiting: number, running: boolean, failed?: Failure, approving?: boolean): [string, Tone] {
   if (state !== 'open') return [state === 'reconnecting' ? 'Reconnecting' : 'Connecting', 'idle'];
   if (waiting) return ['Waiting on you', 'wait'];
+  if (approving) return [APPROVING.line, 'run'];
   if (failed && !running) return [`Failed · ${failed.step}`, 'fail'];
   return running ? ['Running', 'run'] : ['Idle', 'idle'];
 }
@@ -355,7 +357,8 @@ type Tab = 'pane' | 'chat';
 function asksOf(studio: ReturnType<typeof studioFor>, approvals: Approval[], questions: Question[]) {
   const owned = studio ? approvals.filter(studio.owns) : [];
   const cards = approvals.filter((a) => !owned.includes(a));
-  return { owned, cards, inPane: owned.length + (studio ? questions.length : 0), inChat: cards.length + (studio ? 0 : questions.length) };
+  const asking = (list: Approval[]) => list.filter((a) => !a.approving).length;
+  return { owned, cards, inPane: asking(owned) + (studio ? questions.length : 0), inChat: asking(cards) + (studio ? 0 : questions.length) };
 }
 
 const tabFor = (label: string | undefined, picked: Tab | undefined, studio: ReturnType<typeof studioFor>, asks: ReturnType<typeof asksOf>): Tab =>
@@ -450,13 +453,14 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const abort = () => stopRun().catch((e: Error) => setError(e.message));
   const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
-  const waiting = approvals.length + standing.questions.length;
+  // An approve being checked waits on no one.
+  const waiting = approvals.filter((a) => !a.approving).length + standing.questions.length;
   const live = usePane(sessionKey, items, approvals, standing.questions, send, view.running);
   const split = useSplit();
   // The pane takes the room the rail would; the rail then opens as the Details sheet at any width.
   const details = useDetails(!live.paneOpen);
   const open = state === 'open';
-  const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
+  const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0], approvals.some((a) => a.approving));
   const queuedWait = wait && tone === 'run' ? wait : undefined;
   const paneStyle = usePaneStyle();
   const bottom = useStickToBottom();
