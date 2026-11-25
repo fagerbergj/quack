@@ -14,13 +14,10 @@ const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.co
 const verdict = (question: string, evidence: string) => (/state the claim\?/.test(question) ? (evidence.includes(BAD) ? 'silent' : 'states') : 'yes');
 const choice = (c: string) => ({ choice: c, confidence: 1, reason: 'qa' });
 
-// The judge asks both source checks of a finding in one packed request ({"q0":..,"q1":..}); answer each question by its own text, and a single question by the whole request.
+// The judge asks one question of one item per request; it is answered from the whole request.
 function judgeReply(all: string, prompt: string) {
-  if (process.env.JL_DEBUG) console.log("JUDGE", prompt.slice(0, 150).replace(/\n/g, " "), "..", prompt.slice(-200).replace(/\n/g, " "));
   const slow = /serves example \d/.test(prompt) ? { delayMs: 1500 } : {};
-  if (!/"q0": \{/.test(prompt)) return { content: JSON.stringify(choice(verdict(all, all))), ...slow };
-  const qs = [...prompt.matchAll(/^- (q\d+): (.*)$/gm)];
-  return { content: JSON.stringify(Object.fromEntries(qs.map(([, id, q]) => [id, choice(verdict(q, prompt))]))), ...slow };
+  return { content: JSON.stringify(choice(verdict(all, all))), ...slow };
 }
 
 // The writer's next move from the flow its input names and the last tool result; a request without tools is the judge asking.
