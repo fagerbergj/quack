@@ -12,8 +12,10 @@ export type Settings = { defaultModel?: string };
 const SETTINGS_FILE = 'settings.json';
 // Long enough that a page of pickers and a burst of writes share one round of provider calls, short enough that a model swap shows within a minute.
 const DISCOVERY_TTL_MS = 60_000;
+// A round in which a provider could not list is kept only this long, so one hiccup does not hide its listed models for a minute.
+const FAILED_TTL_MS = 5_000;
 
-/** One model a session may run, as provider/model with the limits its provider states or the deployment writes. */
+/** One model a session may run, as provider/model with the limits its provider states or the deployment writes; no `contextWindow` when neither states one. */
 export type ModelInfo = { name: string; contextWindow?: number; images?: boolean; reasoning?: boolean };
 
 export type SessionModels = ReturnType<typeof sessionModels>;
@@ -31,10 +33,18 @@ export function sessionModels(opts: { dataDir: string; deployment: DeploymentCon
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
   const settings = (): Promise<Settings> => readFile(settingsPath, 'utf8').then((t) => JSON.parse(t) as Settings, () => ({}));
   // Callers within the TTL share one discovery, one in flight included; discovery never rejects, a failing provider falls back instead.
-  let cached: { at: number; value: Promise<DeploymentConfig> } | undefined;
+  let cached: { at: number; failed?: boolean; value: Promise<DeploymentConfig> } | undefined;
   const discovered = () => {
-    if (!cached || now() - cached.at >= DISCOVERY_TTL_MS) cached = { at: now(), value: discoverModels(opts.deployment, opts.fetch ?? fetch) };
-    return cached.value;
+    if (cached && now() - cached.at < (cached.failed ? FAILED_TTL_MS : DISCOVERY_TTL_MS)) return cached.value;
+    const round: NonNullable<typeof cached> = { at: now(), value: Promise.resolve(opts.deployment) };
+    const fetchFn = opts.fetch ?? fetch;
+    const watched = (async (...args: Parameters<typeof fetch>) => {
+      const res = await fetchFn(...args).catch((err: unknown) => { round.failed = true; throw err; });
+      round.failed ||= !res.ok;
+      return res;
+    }) as typeof fetch;
+    round.value = discoverModels(opts.deployment, watched);
+    return (cached = round).value;
   };
   // A refusal names what is available, so the caller can correct it.
   async function refusal(model: string): Promise<string | undefined> {
@@ -47,7 +57,7 @@ export function sessionModels(opts: { dataDir: string; deployment: DeploymentCon
     async list(): Promise<{ models: ModelInfo[]; defaultModel?: string }> {
       const resolved = await discovered();
       const fallback = resolveModel(undefined, resolved, { default: (await settings()).defaultModel });
-      const models = availableModels(resolved).map(({ name, contextWindow, images, reasoning }) => ({ name, contextWindow, ...(images && { images }), ...(reasoning && { reasoning }) }));
+      const models = availableModels(resolved).map(({ name, contextWindow, images, reasoning }) => ({ name, ...(contextWindow && { contextWindow }), ...(images && { images }), ...(reasoning && { reasoning }) }));
       return { models, ...(typeof fallback === 'string' && { defaultModel: fallback }) };
     },
     /** The model a session's next run resolves to, as the runtime resolves it from the same inputs. */

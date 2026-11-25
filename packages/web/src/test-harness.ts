@@ -17,7 +17,7 @@ export const notFound = new Fail(404);
 
 export type Routes = Record<string, unknown>;
 // The build stamp is off unless a test turns it on; its 404 is how the app learns that. No models hides the composer's picker.
-const OFF: Routes = { 'GET /version': notFound, 'GET /models': { models: [] }, 'GET /settings': {} };
+const OFF: Routes = { 'GET /version': notFound, 'GET /models': { models: [] } };
 // A session's own meta answers empty, and an extension's service is not connected, unless a test routes them.
 const QUIET = /^GET \/sessions\/[^/?]+\/meta$/;
 const APP = /^GET \/apps\//;

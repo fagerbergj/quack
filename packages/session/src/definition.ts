@@ -8,12 +8,12 @@ import { retryEngineBusy, type ExtensionEntry, type StoreEntry } from '@quack/sd
 import type { ExecPolicy } from './exec.ts';
 import type { AgentSpec } from './runtime.ts';
 
-/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. A model with no `contextWindow` is listed but not selectable. */
+/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. A model with no `contextWindow` runs with UNKNOWN_CONTEXT_WINDOW. */
 export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 /** `systemone` providers are decision models such as Clef: an input cap and no generation. */
-type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
+type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits>; /** Listed ids that are not session models, such as embedding models; matched as hand-written names are (see sameModel). */ hide?: string[] };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
 export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none, below the Settings default; absent, the first available model. */ defaultModel?: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy; /** How long a run waits out a failing model endpoint before it ends in error; default 6. */ modelOutageHours?: number };
@@ -29,6 +29,8 @@ export type Catalog = Record<string, CatalogEntry>;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const positive = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v > 0;
 
+const idList = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((h) => typeof h === 'string'));
+
 function providerProblems(id: string, p: unknown): string[] {
   if (!isObject(p)) return [`providers.${id} must be an object`];
   const problems: string[] = [];
@@ -36,6 +38,7 @@ function providerProblems(id: string, p: unknown): string[] {
   if (p.apiKeyEnv !== undefined && typeof p.apiKeyEnv !== 'string') problems.push(`providers.${id}.apiKeyEnv must be a string`);
   if (p.api !== undefined && p.api !== 'openai-completions' && p.api !== 'systemone') problems.push(`providers.${id}.api must be openai-completions or systemone`);
   if (p.capacity !== undefined && !positive(p.capacity)) problems.push(`providers.${id}.capacity must be a positive integer`);
+  if (!idList(p.hide)) problems.push(`providers.${id}.hide must be a list of model ids`);
   if (p.models === undefined) return problems;
   if (!isObject(p.models)) return [...problems, `providers.${id}.models must be an object`];
   return [...problems, ...Object.entries(p.models).flatMap(([m, l]) => limitProblems(`providers.${id}.models.${m}`, l))];
@@ -136,15 +139,28 @@ export function parseDeployment(raw: unknown): DeploymentConfig {
 
 const splitRef = (ref: string) => [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)] as const;
 
-/** What `GET {baseUrl}/models` states: ids always, and for llama.cpp upstreams `meta.n_ctx` and `architecture.input_modalities`. */
+/** The context window a model whose provider states none runs with: small, so compaction starts early on any real window, and an overflow compacts too. */
+const UNKNOWN_CONTEXT_WINDOW = 32_768;
+// A quarter of that window, so a completion's budget leaves room for the prompt on a window smaller than the guess.
+const UNKNOWN_MAX_TOKENS = 8_192;
+
+// The context field names llama.cpp (`meta.n_ctx`), OpenRouter and llama-swap (`context_length`) and vLLM (`max_model_len`) list.
+const statedContext = (m: Record<string, unknown>) => [isObject(m.meta) ? m.meta.n_ctx : undefined, m.context_length, m.max_model_len].find(positive) as number | undefined;
+// A model whose stated outputs leave out text (an embedding model, say) writes no chat replies.
+const chats = (m: Record<string, unknown>) => !isObject(m.architecture) || !Array.isArray(m.architecture.output_modalities) || m.architecture.output_modalities.includes('text');
+
+/** What `GET {baseUrl}/models` states: ids always, a context window and input modalities where listed. */
 function listed(body: unknown): Record<string, ModelLimits> {
   const data = isObject(body) && Array.isArray(body.data) ? body.data : [];
-  return Object.fromEntries(data.filter((m) => isObject(m) && typeof m.id === 'string').map((m) => {
-    const nCtx = isObject(m.meta) ? m.meta.n_ctx : undefined;
+  return Object.fromEntries(data.filter((m): m is Record<string, unknown> => isObject(m) && typeof m.id === 'string' && chats(m)).map((m) => {
+    const context = statedContext(m);
     const modalities = isObject(m.architecture) && Array.isArray(m.architecture.input_modalities) ? m.architecture.input_modalities : undefined;
-    return [m.id, { ...(positive(nCtx) && { contextWindow: nCtx as number }), ...(modalities && { images: modalities.includes('image') }) }];
+    return [m.id as string, { ...(context && { contextWindow: context }), ...(modalities && { images: modalities.includes('image') }) }];
   }));
 }
+
+/** A listed id is a hand-written model when it is that name or ends in `/<name>`, as a proxy lists a peer's model (`peer/qwen`). */
+const sameModel = (id: string, name: string) => id === name || id.endsWith(`/${name}`);
 
 async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): Promise<Record<string, ModelLimits>> {
   // Decision-model endpoints such as Clef list no models; their limits are always hand-written.
@@ -161,19 +177,29 @@ async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): P
   }
 }
 
-/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; a provider that cannot list keeps its hand-written ones.
+// Hand-written models first, each over what its listed id states, then the listed ids left: none in `hide`, and none another provider writes (Clef on the same proxy).
+function merged(p: ProviderConfig, found: Record<string, ModelLimits>, elsewhere: string[]): Record<string, ModelLimits> {
+  const models: Record<string, ModelLimits> = {};
+  const listedAs = (m: string) => (m in found ? m : Object.keys(found).find((id) => sameModel(id, m)));
+  for (const [m, l] of Object.entries(p.models ?? {})) models[m] = { ...found[listedAs(m) ?? m], ...l };
+  const taken = [...Object.keys(models), ...(p.hide ?? []), ...elsewhere];
+  for (const [id, l] of Object.entries(found)) if (!taken.some((name) => sameModel(id, name))) models[id] = l;
+  return models;
+}
+
+/** Fills each provider's models with the merge rule above; a provider that cannot list keeps its hand-written ones.
  * `only` limits discovery to those provider ids (see referencedProviders): the rest keep their hand-written models. */
 export async function discoverModels(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
   const wanted = (id: string) => !only || only.includes(id);
+  const written = (other: string) => Object.entries(deployment.providers).flatMap(([id, p]) => (id === other ? [] : Object.keys(p.models ?? {})));
   const providers = Object.fromEntries(await Promise.all(Object.entries(deployment.providers).map(async ([id, p]) => {
-    const models = wanted(id) ? await discover(id, p, fetchFn) : {};
-    for (const [m, l] of Object.entries(p.models ?? {})) models[m] = { ...models[m], ...l };
-    return [id, { ...p, models }] as const;
+    const found = wanted(id) ? await discover(id, p, fetchFn) : {};
+    return [id, { ...p, models: merged(p, found, written(id)) }] as const;
   })));
   return { ...deployment, providers };
 }
 
-/** discoverModels, then throws when a defaultModel among the discovered providers is not selectable (one with a contextWindow). */
+/** discoverModels, then throws when a defaultModel among the discovered providers is not one of their models. */
 export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
   const resolved = await discoverModels(deployment, fetchFn, only);
   const ref = resolved.defaultModel;
@@ -182,10 +208,10 @@ export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: t
   return resolved;
 }
 
-/** The session models a resolved deployment offers, as provider/model: every selectable one, decision-model providers left out. */
+/** The session models a resolved deployment offers, as provider/model, decision-model providers left out. */
 export function availableModels(deployment: DeploymentConfig): Array<{ name: string } & ModelLimits> {
   return Object.entries(deployment.providers).filter(([, p]) => p.api !== 'systemone').flatMap(([id, p]) =>
-    Object.entries(p.models ?? {}).filter(([, l]) => l.contextWindow).map(([m, l]) => ({ name: `${id}/${m}`, ...l })));
+    Object.entries(p.models ?? {}).map(([m, l]) => ({ name: `${id}/${m}`, ...l })));
 }
 
 /** What a person chose outside the agent's bundle: the session's own pick and the Settings default, which the distributor writes into the session dir. */
@@ -246,11 +272,10 @@ export function referencedProviders(definition: unknown, deployment: Pick<Deploy
 }
 
 function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {
-  if (model === undefined) return ['no model is available: name one in the agent, on the Settings page or as the deployment\'s defaultModel, or give a provider a model with a contextWindow'];
+  if (model === undefined) return ['no model is available: name one in the agent, on the Settings page or as the deployment\'s defaultModel, or give a provider a model'];
   if (typeof model !== 'string' || !model.includes('/')) return ['model must be "provider/model"'];
   const limits = deployment.providers[splitRef(model)[0]]?.models?.[splitRef(model)[1]];
-  if (!limits) return [`model ${model} is not configured in this deployment`];
-  return limits.contextWindow ? [] : [`model ${model} has no contextWindow, so it cannot be selected; write one in providers.${splitRef(model)[0]}.models`];
+  return limits ? [] : [`model ${model} is not configured in this deployment`];
 }
 
 /** What an agent installs: the names it selects plus their `requires` transitively, each after what it needs (selected `optional` ones too); problems name a missing requirement or a cycle. */
@@ -395,17 +420,17 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
   const models = createModels();
   const priced = (l: ModelLimits): Price => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...l.price });
   for (const [id, p] of Object.entries(deployment.providers)) {
-    const entries = Object.entries(p.models ?? {}).filter(([, l]) => l.contextWindow);
+    const entries = Object.entries(p.models ?? {});
     const auth = { apiKey: envApiKeyAuth(id, [providerEnv({ providers: { [id]: p } })[0]]) };
     // Clef answers on another upstream, so it never returns these refusals: retryEngineBusy wraps the openai-completions providers only.
     if (p.api === 'systemone') {
-      const list = entries.map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
+      const list = entries.filter(([, l]) => l.contextWindow).map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
       models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
       continue;
     }
-    // Without a hand-written maxTokens the model's context window caps a completion.
+    // Without a hand-written maxTokens the context window caps a completion; pi-ai clamps max_tokens to the window less the prompt (clampMaxTokensToContext).
     const list = entries.map(([m, l]) => ({
-      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow, maxTokens: l.maxTokens ?? l.contextWindow,
+      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow ?? UNKNOWN_CONTEXT_WINDOW, maxTokens: l.maxTokens ?? l.contextWindow ?? UNKNOWN_MAX_TOKENS,
     }));
     models.setProvider(retryEngineBusy(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, api: openAICompletionsApi() })));
   }

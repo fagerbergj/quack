@@ -20,7 +20,7 @@ async function temp() {
   return dir;
 }
 
-// llm-swap lists `big` with its context; `hand` is only hand-written, and `clef` is a decision model, never a session's.
+// llm-swap lists `big` with its context and `no-ctx` without; `hand` is only hand-written, and `clef` is a decision model, never a session's.
 const deployment = parseDeployment({
   providers: {
     local: { baseUrl: 'http://swap/v1', models: { hand: { contextWindow: 4096 } } },
@@ -33,11 +33,29 @@ const down = (async () => { throw new Error('refused'); }) as unknown as typeof 
 test('the model list is what each provider\'s /models states plus the hand-written ones, and falls back to those when discovery fails', async () => {
   const dataDir = await temp();
   assert.deepEqual(await sessionModels({ dataDir, deployment, fetch: listing }).list(), {
-    models: [{ name: 'local/big', contextWindow: 262144, images: true }, { name: 'local/hand', contextWindow: 4096 }],
-    defaultModel: 'local/big',
-  }, 'with no default anywhere the first available is the default');
+    models: [{ name: 'local/hand', contextWindow: 4096 }, { name: 'local/big', contextWindow: 262144, images: true }, { name: 'local/no-ctx' }],
+    defaultModel: 'local/hand',
+  }, 'with no default anywhere the first available is the default; an unknown context is left out');
   const warn = mock.method(console, 'error', () => {});
   assert.deepEqual(await sessionModels({ dataDir, deployment, fetch: down }).list(), { models: [{ name: 'local/hand', contextWindow: 4096 }], defaultModel: 'local/hand' });
+  warn.mock.restore();
+});
+
+test('a round in which a provider could not list is retried after a few seconds, while one that listed is kept for the minute', async () => {
+  let [t, up, calls] = [0, false, 0];
+  const flaky = (async (...args: Parameters<typeof fetch>) => ((calls += 1), up ? listing(...args) : down(...args))) as typeof fetch;
+  const warn = mock.method(console, 'error', () => {});
+  const models = sessionModels({ dataDir: await temp(), deployment, fetch: flaky, now: () => t });
+  const names = async () => (await models.list()).models.map((m) => m.name);
+  assert.deepEqual(await names(), ['local/hand']);
+  up = true;
+  t = 4_999;
+  assert.deepEqual(await names(), ['local/hand'], 'callers within the short backoff share the failed round');
+  t = 5_000;
+  assert.deepEqual(await names(), ['local/hand', 'local/big', 'local/no-ctx']);
+  t = 64_999;
+  await names();
+  assert.equal(calls, 2);
   warn.mock.restore();
 });
 
@@ -46,7 +64,7 @@ test('the Settings default is checked, persists in the data dir across restarts,
   const withDefault = parseDeployment({ ...deployment, defaultModel: 'local/hand' });
   const models = sessionModels({ dataDir, deployment: withDefault, fetch: listing });
   assert.equal((await models.list()).defaultModel, 'local/hand', 'the deployment default is the fallback');
-  assert.match(String(await models.setDefault('local/no-ctx')), /model local\/no-ctx is not available; available: local\/big, local\/hand/);
+  assert.match(String(await models.setDefault('local/nope')), /model local\/nope is not available; available: local\/hand, local\/big, local\/no-ctx/);
   assert.match(String(await models.setDefault('clef/clef')), /not available/, 'a decision model is no session model');
   assert.equal(await models.setDefault('local/big'), undefined);
   const restarted = sessionModels({ dataDir, deployment: withDefault, fetch: listing });
@@ -77,7 +95,7 @@ async function distributor(driver?: (real: HostDriver) => HostDriver) {
 
 test('GET /models lists the available models and PATCH /settings sets the default, refusing one that is not available', async () => {
   const { call } = await distributor();
-  assert.deepEqual(await (await call('GET', '/models')).json(), { models: [{ name: 'local/big', contextWindow: 262144, images: true }, { name: 'local/hand', contextWindow: 4096 }], defaultModel: 'local/big' });
+  assert.deepEqual(await (await call('GET', '/models')).json(), { models: [{ name: 'local/hand', contextWindow: 4096 }, { name: 'local/big', contextWindow: 262144, images: true }, { name: 'local/no-ctx' }], defaultModel: 'local/hand' });
   const refused = await call('PATCH', '/settings', { defaultModel: 'local/nope' });
   assert.equal(refused.status, 400);
   assert.match((await refused.json()).detail, /local\/nope is not available/);
@@ -89,9 +107,9 @@ test('GET /models lists the available models and PATCH /settings sets the defaul
 
 test('a person sets a session\'s model through the Sessions API; an unavailable one is refused and nothing is written', async () => {
   const { dataDir, call } = await distributor();
-  const refused = await call('PATCH', '/sessions/idle', { model: 'local/no-ctx', title: 'Kept out' });
+  const refused = await call('PATCH', '/sessions/idle', { model: 'local/nope', title: 'Kept out' });
   assert.equal(refused.status, 400);
-  assert.match((await refused.json()).detail, /model local\/no-ctx is not available; available: local\/big, local\/hand/);
+  assert.match((await refused.json()).detail, /model local\/nope is not available; available: local\/hand, local\/big, local\/no-ctx/);
   assert.equal((await (await call('GET', '/sessions/idle')).json()).title, undefined, 'the title in the refused patch is not written');
   assert.equal((await call('PATCH', '/sessions/idle', { model: 'no-slash' })).status, 400);
   const set = await call('PATCH', '/sessions/idle', { model: 'local/hand' });

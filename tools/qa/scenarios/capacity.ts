@@ -18,8 +18,7 @@ const heldOnLocal = () => {
 };
 
 // The fake model looks at the capacity store while a chat call is in flight, so the check sees the gate's lease, not a later state.
-// Requests without messages are the provider's model listing, which no lease covers.
-const script: FakeScript = (r) => (r.messages && during.push(heldOnLocal()), { content: 'Done.' });
+const script: FakeScript = () => (during.push(heldOnLocal()), { content: 'Done.' });
 
 const scenario: Scenario = {
   name: 'capacity',

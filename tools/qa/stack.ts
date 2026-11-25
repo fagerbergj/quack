@@ -75,7 +75,7 @@ function deployment(modelUrl: string, capacity?: number) {
   return {
     defaultModel: 'local/qwen3.8-flash-next',
     providers: {
-      local: { baseUrl: modelUrl, models: { 'qwen3.8-27b': { ...limits, images: true }, 'qwen3.8-flash-next': { ...limits, images: true }, [FAKE_MODEL]: limits }, ...(capacity && { capacity }) },
+      local: { baseUrl: modelUrl, hide: ['qwen3-embed'], models: { 'qwen3.8-27b': { ...limits, images: true }, 'qwen3.8-flash-next': { ...limits, images: true }, [FAKE_MODEL]: limits }, ...(capacity && { capacity }) },
       clef: { baseUrl: modelUrl, api: 'systemone', models: { clef: { contextWindow: 8192, maxTokens: 1024 } } },
     },
   };
