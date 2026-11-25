@@ -197,7 +197,7 @@ test('a declaration that misses a check or misconfigures decisionModel is refuse
   };
   await assert.rejects(rejudge(api, opts(rubricOf('other', 2), decl), sealed, 'm', BACKGROUND_CONTEXT), /no declaration for other; declared checks the rubric lacks: cited/);
   const routed = { ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: true as never } } };
-  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false or pass-only: cited/);
+  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false, pass-only or confident-only: cited/);
   assert.doesNotThrow(() => checkDeclaration({ ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: PASS_ONLY } } }, ['cited']));
 });
 

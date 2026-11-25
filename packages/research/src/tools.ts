@@ -11,12 +11,16 @@ export type ResearchConfig = {
   maxFetchBytes?: number;
 };
 
-/** `chars` is the extracted text's full length, which the stored copy may fall short of; absent on records written before it existed. */
-export type SourceRecord = { id: string; url: string; fetchedAt: number; hash: string; chars?: number };
+/** `url` is where the page was read, after redirects, and `asked` the URL requested when it differs; `chars` is the extracted text's full length,
+ *  which the stored copy may fall short of. Records written before either existed lack it. */
+export type SourceRecord = { id: string; url: string; asked?: string; fetchedAt: number; hash: string; chars?: number };
 
-/** Everything the session fetched, in order; reports cite these ids and the judge checks the citations against them. */
-export const SourcesDoc = defineDoc<{ sources: SourceRecord[] }>({
-  kind: 'research.sources', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ sources: [] }), checkpointWhen: () => false,
+/** A search hit's URL, the first time any search returned it. */
+export type Found = { url: string; at: number };
+
+/** Everything the session fetched, in order, and every search hit; the judge checks a report's citations and links against them. `found` is absent on sessions from before it. */
+export const SourcesDoc = defineDoc<{ sources: SourceRecord[]; found?: Found[] }>({
+  kind: 'research.sources', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ sources: [], found: [] }), checkpointWhen: () => false,
 });
 
 const MAX_CHARS = 30_000;
@@ -95,7 +99,7 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
       const got = await safeGet(url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, isPublic });
       if (got.status >= 400) return { failed: `${got.url} answered ${got.status}` };
       const text = await toText(got.body, got.contentType);
-      return { text, record: { url: got.url, fetchedAt: 0, hash: createHash('sha256').update(got.body).digest('hex'), chars: text.length } };
+      return { text, record: { url: got.url, ...(got.url !== url && { asked: url }), fetchedAt: 0, hash: createHash('sha256').update(got.body).digest('hex'), chars: text.length } };
     } catch (err) {
       return { failed: `cannot fetch ${url}: ${(err as Error).message}` };
     }
@@ -115,7 +119,7 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
           continue;
         }
         const record = { ...page.record, fetchedAt: api.now() };
-        // Kept for later claim-support checks; a failed write is ignored so it loses only that input, not the fetch.
+        // Kept for read_source; a failed write is ignored so it loses only that text, not the fetch.
         await api.env?.writeFile(sourcePath(record.hash), page.text.slice(0, MAX_STORED_CHARS), ctx);
         const id = await api.commit(async (tx) => {
           const doc = await tx.doc(SourcesDoc, api.conversationId);
@@ -163,7 +167,7 @@ export function formatResults(results: ExaResult[]): string {
 export function webSearchTool(config: ResearchConfig) {
   // Read once: the runtime drops declared variables from the process after load, so no child process inherits the key.
   const apiKey = process.env.QUACK_EXA_API_KEY;
-  const search = async (query: string, count: number): Promise<string> => {
+  const search = async (query: string, count: number): Promise<{ text: string; urls: string[] }> => {
     // Body reads are inside the try: a malformed or dropped body fails this query, not the batch.
     try {
       const res = await fetch(`${config.exaUrl ?? process.env.QUACK_EXA_URL ?? 'https://api.exa.ai'}/search`, {
@@ -172,21 +176,29 @@ export function webSearchTool(config: ResearchConfig) {
         body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),
         signal: AbortSignal.timeout(20_000),
       });
-      if (!res.ok) return `search failed: ${res.status} ${(await res.text()).slice(0, 200)}`;
-      return formatResults(((await res.json()) as { results?: ExaResult[] }).results ?? []);
+      if (!res.ok) return { text: `search failed: ${res.status} ${(await res.text()).slice(0, 200)}`, urls: [] };
+      const results = ((await res.json()) as { results?: ExaResult[] }).results ?? [];
+      return { text: formatResults(results), urls: results.map((r) => r.url) };
     } catch (err) {
-      return `search failed: ${(err as Error).message}`;
+      return { text: `search failed: ${(err as Error).message}`, urls: [] };
     }
   };
   return defineTool({
     name: 'web_search',
-    description: `Search the web (Exa) for up to ${MAX_BATCH} queries at once; each gets titles, URLs, dates and a snippet per hit, or its own failure. Fetch a hit with web_fetch before citing it.`,
+    description: `Search the web (Exa) for up to ${MAX_BATCH} queries at once; each gets titles, URLs, dates and a snippet per hit, or its own failure. A hit may be linked; fetch it with web_fetch to cite it as a source.`,
     parameters: obj({ queries: batch('Search queries'), count: opt(int({ minimum: 1, maximum: 20, description: 'Hits per query' })) }, { open: true }),
     replay: 'safe',
-    async execute(args, _api, _ctx) {
+    async execute(args, api, ctx) {
       if (!apiKey) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');
       const results = await mapLimit(args.queries, (q) => search(q, args.count ?? 8));
-      return { output: [{ type: 'text', text: results.map((r, i) => `## ${args.queries[i]}\n${r}`).join('\n\n') }] };
+      // A rerun after a crash records nothing twice: a hit already found keeps its first time.
+      await api.commit(async (tx) => {
+        const doc = await tx.doc(SourcesDoc, api.conversationId);
+        const seen = new Set((doc.found ?? []).map((f) => f.url));
+        const fresh = [...new Set(results.flatMap((r) => r.urls))].filter((url) => !seen.has(url));
+        if (fresh.length) doc.found = [...(doc.found ?? []), ...fresh.map((url) => ({ url, at: api.now() }))];
+      }, ctx);
+      return { output: [{ type: 'text', text: results.map((r, i) => `## ${args.queries[i]}\n${r.text}`).join('\n\n') }] };
     },
   });
 }
