@@ -129,7 +129,7 @@ function QueuedChip({ text, failed, onNow, onRemove }: { text: string; failed?: 
     <div className="pointer-events-auto flex max-w-[92%] items-center gap-1 self-end rounded-2xl border border-line-strong bg-soft py-0.5 pr-0.5 pl-3">
       {failed === undefined
         ? <span className="flex-none text-[12px] text-muted">Queued</span>
-        : <span className="min-w-0 max-w-[45%] flex-none truncate text-[12px] text-danger" title={failed}>Couldn't send: {failed}</span>}
+        : <span className="flex-none text-[12px] text-danger" title={failed}>Couldn't send<span className="sr-only">: {failed}</span></span>}
       <span className="min-w-0 truncate text-[13.5px]">{text}</span>
       <button type="button" onClick={onNow} className={`${chipBtn} px-2.5 text-link`}>{failed === undefined ? 'Send now' : 'Retry'}</button>
       <button type="button" aria-label={failed === undefined ? 'Remove queued message' : 'Discard message'} onClick={onRemove} className={`${chipBtn} grid w-11 place-items-center text-muted hover:text-ink lg:w-8`}>

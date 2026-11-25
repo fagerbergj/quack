@@ -1734,12 +1734,15 @@ test('Delete asks first, names the session, and goes back to the list once confi
   expect(deletes()).toEqual(['sessions/ui%3Au1']);
 });
 
-test('a message the session could not be started for shows why, with Retry and Discard, and the delete dialog counts it', async () => {
+test('a message the session could not be started for reads "Couldn\'t send" with Retry and Discard, the reason in its tooltip, and the delete dialog counts it', async () => {
   withRow();
   const ws = await openSession();
   ws.frame(snapshot());
   ws.frame({ type: 'queued', items: [{ id: 'queued:r1', text: 'are you there', failed: 'no capacity' }] });
-  expect(screen.getByText("Couldn't send: no capacity")).toBeInTheDocument();
+  // On screen only "Couldn't send"; the reason is the tooltip, and screen readers get it as hidden text.
+  const label = screen.getByTitle('no capacity');
+  expect(label).toHaveTextContent("Couldn't send: no capacity");
+  expect(within(label).getByText(': no capacity')).toHaveClass('sr-only');
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(ws.sent.at(-1)).toEqual({ type: 'steer', id: 'queued:r1' });
   await userEvent.click(screen.getByRole('button', { name: 'Discard message' }));
