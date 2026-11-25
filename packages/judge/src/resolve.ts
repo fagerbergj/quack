@@ -1,8 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
-import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
+import type { ClassifierModel, ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
-import { createHash } from 'node:crypto';
-import { agentModel, decide, modelResolver, observeGeneration, parseDecision, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
+import { agentModel, decide, modelResolver, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
 import { PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Cause, Unit } from './rubric.ts';
@@ -24,7 +23,7 @@ export type Item = { unit: Unit; checks: Ask[] };
 export type Limit = ReturnType<typeof limiter>;
 
 const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
-// Part of every item-reuse key: bump it when request, point, packedPrompt, CRITERIA or the sdk's decide prompt change,
+// Part of every item-reuse key: bump it when request, point, CRITERIA or the sdk's decide prompt change,
 // so answers given to the old prompts are asked again.
 export const PROMPT_VERSION = 2;
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
@@ -126,68 +125,8 @@ function point(memo: string, unit: Unit, ask: Ask) {
   return { name: `${memo}:${unit.id}:${ask.id}`, question, options: q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no'], evidence: JSON.stringify(state, null, 1) };
 }
 
-const optionsOf = (q: Question) => (q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no']);
-
-/** One unsure question of a packed group: its unit, which item that unit is in the request, and the check. */
+/** One question of a request: its unit, which item that unit is in the request, and the check. */
 export type Pending = { i: number; unit: Unit; check: Ask };
-
-// The context goes once, as on the decision model; the questions follow the evidence so a long context does not bury them.
-function packedPrompt(pending: Pending[]): string {
-  const units = [...new Set(pending.map((p) => p.unit))];
-  const evidence = { context: units[0].shared, items: units.map((u) => ({ id: u.id, ...u.state })) };
-  const questions = pending.map((p, n) => `- q${n}: About items[${units.indexOf(p.unit)}] (${p.unit.id}): ${point('', p.unit, p.check).question}\n  Options: ${optionsOf(p.check.question).join(', ')}`);
-  return `Evidence:\n${JSON.stringify(evidence, null, 1)}\n\nDecide each question below from the evidence.\n${questions.join('\n')}\n\nAnswer with one JSON object and nothing else, one entry per question id: {"q0": {"choice": "<one option exactly>", "confidence": <0 to 1>, "reason": "<one sentence>"}, ...}`;
-}
-
-function parsePacked(text: string, pending: Pending[]): Array<{ choice: string; reason: string } | null> {
-  let all: Record<string, unknown> = {};
-  try {
-    all = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) ?? {};
-  } catch {
-    // A reply that is not JSON answers nothing; every question falls back to its own escalation.
-  }
-  return pending.map((p, n) => parseDecision(JSON.stringify(all[`q${n}`] ?? null), { name: '', question: '', options: optionsOf(p.check.question) }) ?? null);
-}
-
-type Reply = { choice: string; reason: string } | null;
-type JudgeModel = ReturnType<ToolExecutionApi['models']['getModel']>;
-
-/** The judge model's input window: its context less the reply it may write; undefined when the deployment gives none. */
-const windowOf = (m: JudgeModel) => (m?.contextWindow ? m.contextWindow - (m.maxTokens ?? 0) : undefined);
-
-// The judge model reasons through every question of a request in one generation, so a long batch is cut to run in parallel.
-export const MAX_BATCH_QUESTIONS = 4;
-
-/** Unsure questions in order, cut into sub-batches of at most MAX_BATCH_QUESTIONS whose prompt (the shared context once in each) fits the judge model's window. */
-export function subBatches(pending: Pending[], window: number | undefined): Pending[][] {
-  const out: Pending[][] = [];
-  for (const p of pending) {
-    const last = out.at(-1);
-    const fits = (batch: Pending[]) => batch.length <= MAX_BATCH_QUESTIONS && (window === undefined || packedPrompt(batch).length / BYTES_PER_TOKEN <= window);
-    if (last && fits([...last, p])) last.push(p);
-    else out.push([p]);
-  }
-  return out;
-}
-
-/** The memo key of one batched judge-model request: its questions, so a rerun of the same sub-batch reuses its reply. */
-export const batchKey = (memo: string, pending: Pending[]) => `${memo}:escalation:${createHash('sha256').update(pending.map((p) => `${p.unit.id}:${p.check.id}`).join('\n')).digest('hex').slice(0, 16)}`;
-
-// One judge-model request for a sub-batch, memoized; fewer than two questions go alone instead, so none is sent.
-async function askBatch(api: ToolExecutionApi, s: Settings, model: JudgeModel, pending: Pending[], ctx: Context): Promise<Map<Pending, Reply>> {
-  if (pending.length < 2 || !model) return new Map();
-  const key = batchKey(s.memo, pending);
-  let replies = await api.memo<Reply[]>(key, ctx);
-  if (!replies) {
-    const messages = [{ role: 'user' as const, content: packedPrompt(pending), timestamp: api.now() }];
-    const send = (fetch: typeof globalThis.fetch) => observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch }));
-    const reply = await retryModelCall(`${model.provider}/${model.id}`, send, ctx.abortSignal, s.retry).catch(() => undefined);
-    ctx.abortSignal?.throwIfAborted();
-    if (!reply || reply.stopReason === 'error') return new Map();
-    replies = await api.memo(key, parsePacked(contentText(reply.content), pending), ctx);
-  }
-  return new Map(pending.map((p, n) => [p, replies![n]]));
-}
 
 async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask, ctx: Context): Promise<Answer> {
   const { judgeModel, memo } = s;
@@ -234,33 +173,8 @@ async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[]
   return fresh === undefined ? undefined : api.memo(key, fresh, ctx);
 }
 
-// A packed group's unsure questions go in sub-batches that fit the judge model, each one request within the limit;
-// a question its reply leaves out, or a failed sub-batch's, escalates alone in a slot of its own.
-async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending[], ctx: Context, need: Need, alone: Alone, done: Done) {
-  const ref = s.judgeModel ?? (await api.agent(ctx)).model;
-  const model = ref && api.models.getModel(ref.provider, ref.modelId);
-  const resolver = ref?.modelId ?? agentModel.id;
-  await Promise.all(subBatches(unsure, windowOf(model)).map(async (batch) => {
-    const held = batch.map((p) => s.hold?.ready(p.unit, p.check)).filter((w) => w !== undefined);
-    if (held.length) await Promise.all(held);
-    const missed = await s.escalations(async () => {
-      const needed = batch.filter((p) => need(p.unit, p.check));
-      const replies = await asking(s, needed, () => askBatch(api, s, model, needed, ctx));
-      for (const p of batch) {
-        const r = replies.get(p);
-        if (r) await done(p, { met: passing(p.check).includes(r.choice), resolver, note: r.reason });
-      }
-      return batch.filter((p) => !replies.get(p));
-    });
-    await Promise.all(missed.map((p) => alone(p)));
-  }));
-}
-
-type Alone = (p: Pending) => Promise<void>;
-type Done = (p: Pending, a: Answer | undefined) => Promise<void>;
-
 // One decision-model request per packed group; confident answers stand and are counted first, so a decided check asks no more.
-// The rest escalate: a packed group's in sub-batches, a lone unit's questions concurrently, all within the escalation limit.
+// The rest escalate one question per judge-model call: a batch of them made the judge model weigh items against each other and reason far longer.
 export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>, need: Need = () => true): Promise<Answered[]> {
   const pairs = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check })));
   const out = new Map<Pending, Answered>();
@@ -296,7 +210,6 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await asking(s, [a], () => escalate(api, s, a.unit, a.check, ctx)) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.
   const alone = (a: Pending) => s.hold?.ready(a.unit, a.check)?.then(() => go(a)) ?? go(a);
-  if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);
-  else await Promise.all(unsure.map((a) => alone(a)));
+  await Promise.all(unsure.map((a) => alone(a)));
   return asked.map((a) => out.get(a)!);
 }
