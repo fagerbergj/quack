@@ -84,6 +84,13 @@ test('failing checks come first, open on their failing items with each note; a p
   expect(within(open).getByText('3 of 60')).toBeInTheDocument();
 });
 
+test("a model check a failed gate kept from running is listed apart from the approve-time ones, as not run", () => {
+  render(<CheckResult verdict={verdict([check({ id: 'g', weight: 'gate', met: 0 }), check({ id: 'm', label: 'A claim its sources don\'t back', met: null, deferred: 'gate' })])} open />);
+  const group = screen.getByText('Run once the gates pass').parentElement!;
+  expect(within(group).getByRole('img', { name: "Didn't run: a gate failed" })).toBeInTheDocument();
+  expect(screen.queryByText('Run when you approve')).toBeNull();
+});
+
 test('a check opens on its first 5 failing items; the rest wait behind "N more failing"', async () => {
   const notes = Array.from({ length: 8 }, (_, i) => `f${i + 1}: reason ${i + 1}.`);
   render(<CheckResult verdict={verdict([check({ met: 0, units: 8, notes })])} open />);
@@ -100,16 +107,4 @@ test('an expanded check says how many items it ran over and who settled them, ea
   expect(screen.getByText('60 items · 52 by Clef, 8 by the judge model')).toHaveAttribute('title', '52 by clef, 8 by qwen3.8-flash-next');
   expect(screen.queryByText(/^1 items/)).toBeNull();
   expect(resolverLine({ units: 4, resolvers: { code: 1, clef: 1 }, reused: { a: 1, b: 1 } })?.text).toBe('4 items · 1 by Clef, 1 by code, 2 from earlier versions');
-});
-
-test("a research report's failing item shows its claim, read from the report by finding and sentence, and the source it cites", () => {
-  const report = ['## Summary', 'Heat pumps pay.', '', '## Findings', '- Rebates are 1500 per ton [s3]. They cap at 3 tons [s3].', '- Costs run 14k to 22k [s4].', '- Prices by size:', '  - A 2-ton unit is 9k [s1].'].join('\n');
-  const notes = ['finding-1.2: source finding-1.2 ~ s3: The source gives a 2-ton cap.', 'finding-3.1: source finding-3.1 ~ s1: flagged by clef (no reason given): "A 2-ton unit is 9k"; re-verify it against the cited source before rewording it'];
-  render(<CheckResult verdict={verdict([check({ met: 0.5, units: 4, groups: 4, notes })])} open about={{ kind: 'research.report', content: report }} />);
-  expect(screen.getByText('finding-1.2 · s3')).toBeInTheDocument();
-  expect(screen.getByText('“They cap at 3 tons.”')).toBeInTheDocument();
-  expect(screen.getByText('→ s3')).toBeInTheDocument();
-  expect(screen.getByText('The source gives a 2-ton cap.')).toBeInTheDocument();
-  expect(screen.getByText('“A 2-ton unit is 9k.”')).toBeInTheDocument();
-  expect(screen.getByText('Flagged by Clef, no reason given')).toHaveAttribute('title', expect.stringMatching(/^flagged by clef/));
 });

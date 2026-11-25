@@ -61,6 +61,21 @@ test('a failed last run reads its step until a new run works on it; pending asks
   expect(look(row('remarkable:d1', { pendingAsks: 1 })).line).toBe('Waiting on you');
 });
 
+test('a failure older than the newest activity or ask gives way to waiting; one that is the latest stays red', () => {
+  const failed = { lastRun: { outcome: 'failed' as const, endedAt: '2026-11-23T01:56:29Z', failedSteps: [{ step: 'model', error: 'the engine stopped' }] } };
+  const asked = row('contracts:c1', { ...failed, lastActivity: '2026-11-25T04:01:24Z', pendingAsks: 1, oldestAskAt: '2026-11-25T04:05:14Z' });
+  expect(look(asked)).toMatchObject({ line: 'Waiting on you', tone: 'warn' });
+  expect(look(row('contracts:c1', { ...failed, lastActivity: '2026-11-23T01:56:29Z', pendingAsks: 1, oldestAskAt: '2026-11-23T01:50:00Z' })).tone).toBe('bad');
+});
+
+test('a session whose newest run stopped without an end reads Interrupted, not its never-ran words', () => {
+  const cut = look(row('remarkable:d1', { lastActivity: '2026-11-02T01:00:00.000Z' }));
+  expect(cut).toMatchObject({ line: 'Interrupted', tone: 'muted', why: 'The last run stopped before it finished; it resumes on the next message' });
+  expect(look(row('ui:x', { agent: 'coder', lastActivity: '2026-11-02T01:00:00.000Z' })).line).toBe('Interrupted');
+  expect(look(row('remarkable:d1')).line).toBe('Not transcribed yet');
+  expect(look(row('remarkable:d1', { state: 'running', lastActivity: '2026-11-02T01:00:00.000Z' })).line).toBe('Transcribing');
+});
+
 test('a Home conversation reads Chat or Working, never the agent name', () => {
   expect(look(row('home:main', { agent: 'quack', ...ended('succeeded') })).line).toBe('Chat');
   expect(look(row('home:main', { agent: 'quack', state: 'running' })).line).toBe('Working');

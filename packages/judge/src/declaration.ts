@@ -83,14 +83,18 @@ const groupByOf = (decl: Declaration, scope: string) => Object.values(decl.check
 /** The decisionModel value under which the decision model may pass an item but not fail it; the judge model decides and explains a failing one. */
 export const PASS_ONLY = 'pass-only' as const;
 
+/** The decisionModel value under which only the decision model's confident answers stand and an item it is unsure of holds, unescalated:
+ *  for feedback checks such as style, where a finding is worth reporting only when the model is sure of it (as lintdec does). */
+export const CONFIDENT_ONLY = 'confident-only' as const;
+
 /** How one model check is judged: the scope it fans out over, the question asked per item, and the fold. */
 export type CheckDecl = {
   scope: string;
   question: Question;
   aggregate: AggregateDecl;
   /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations.
-   *  PASS_ONLY: the decision model may pass an item but never fail one; a failing answer escalates like an unsure one, and the judge model's answer and reason stand. */
-  decisionModel?: false | typeof PASS_ONLY;
+   *  PASS_ONLY or CONFIDENT_ONLY: how the decision model's failing or unsure answers are taken, as each constant says. */
+  decisionModel?: false | typeof PASS_ONLY | typeof CONFIDENT_ONLY;
 };
 
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
@@ -170,10 +174,10 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const missing = modelChecks.filter((id) => !decl.checks[id]);
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
-  const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false && c.decisionModel !== PASS_ONLY).map(([id]) => id);
+  const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false && c.decisionModel !== PASS_ONLY && c.decisionModel !== CONFIDENT_ONLY).map(([id]) => id);
   const misgrouped = Object.entries(decl.checks).filter(([, c]) => (c.aggregate.name === 'grouped' ? !GROUPING.every((f) => c.aggregate[f] !== undefined) : GROUPING.some((f) => c.aggregate[f] !== undefined))).map(([id]) => id);
   // A scope's units carry one group key, so its grouped checks must agree on where it is.
   const torn = Object.entries(decl.checks).filter(([, c]) => c.aggregate.name === 'grouped' && c.aggregate.groupBy !== groupByOf(decl, c.scope)).map(([id]) => id);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`, misgrouped.length && `a grouped fold needs groupBy, inner and outer, and only a grouped fold takes them: ${misgrouped.join(', ')}`, torn.length && `grouped checks on one scope group by different fields: ${torn.join(', ')}`].filter(Boolean);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false, ${PASS_ONLY} or ${CONFIDENT_ONLY}: ${routed.join(', ')}`, misgrouped.length && `a grouped fold needs groupBy, inner and outer, and only a grouped fold takes them: ${misgrouped.join(', ')}`, torn.length && `grouped checks on one scope group by different fields: ${torn.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

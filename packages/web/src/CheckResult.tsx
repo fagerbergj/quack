@@ -8,13 +8,14 @@ export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" 
 function headline(v: Verdict, failed: number): string {
   if (v.passed) return 'Double-check passed';
   const fix = `${failed} to fix`;
-  return v.limitReached ? `Double-check failed at the revision limit · ${fix}` : `Double-check failed · ${fix}`;
+  return v.limitReached ? `Double-check failed at the ${v.cap === 'gates' ? 'gate' : 'revision'} limit · ${fix}` : `Double-check failed · ${fix}`;
 }
 
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
 export function CheckResult({ verdict, open, summary, about }: { verdict: Verdict; open: boolean; summary?: string; about?: About }) {
   const failed = verdict.checks.filter(checkFailed);
-  const later = verdict.checks.filter((c) => c.deferred);
+  const later = verdict.checks.filter((c) => c.deferred === 'approval');
+  const gated = verdict.checks.filter((c) => c.deferred === 'gate');
   const rest = verdict.checks.filter((c) => !checkFailed(c) && !c.deferred);
   const group = (title: string, checks: Check[]) => checks.length > 0 && (
     <div className="flex flex-col">
@@ -32,6 +33,7 @@ export function CheckResult({ verdict, open, summary, about }: { verdict: Verdic
         {group(verdict.limitReached ? 'Released with these unfixed' : 'The revision must fix', failed)}
         {group('Checked, nothing found', rest)}
         {group('Run when you approve', later)}
+        {group('Run once the gates pass', gated)}
       </div>
     </details>
   );

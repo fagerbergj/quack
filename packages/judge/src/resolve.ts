@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ClassifierModel, ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
 import { agentModel, decide, modelResolver, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
-import { PASS_ONLY, type Question } from './declaration.ts';
+import { CONFIDENT_ONLY, PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Cause, Unit } from './rubric.ts';
 
@@ -15,7 +15,7 @@ export type Answer = { met: boolean | null; resolver: string; note?: string; /**
 const BYTES_PER_TOKEN = 3;
 
 /** One question asked of a unit: `id` is the check's key; a choice question holds when the answer is one of `pass` (its first option by default). */
-export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated; PASS_ONLY: only its passing answers stand. */ decisionModel?: false | typeof PASS_ONLY };
+export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated; PASS_ONLY: only its passing answers stand; CONFIDENT_ONLY: an unsure answer holds. */ decisionModel?: false | typeof PASS_ONLY | typeof CONFIDENT_ONLY };
 
 /** A unit with the questions asked of it. */
 export type Item = { unit: Unit; checks: Ask[] };
@@ -195,6 +195,8 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   // A PASS_ONLY check's confident failing answer is not taken: the judge model decides it and gives the writer a reason.
   const sure = (p: number | undefined, check: Ask) => p !== undefined && (p >= act || (1 - p >= act && check.decisionModel !== PASS_ONLY));
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
+  const unsureHolds = (x: (typeof asked)[number]) => x.check.decisionModel === CONFIDENT_ONLY && x.p !== undefined && !sure(x.p, x.check);
+  for (const a of asked.filter(unsureHolds)) await done(a, { met: true, resolver: s.ref!.modelId });
   // An unreachable decision model leaves its items undecided for the round to ask again, instead of loading the judge model.
   const stalled = probabilities === undefined ? asked.filter((x) => x.check.decisionModel !== false) : [];
   for (const a of stalled) {
@@ -202,7 +204,7 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
     await done(a, { met: null, resolver: 'none' });
   }
   s.hold?.heard(asked);
-  const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check));
+  const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check) && !unsureHolds(x));
   // Without a decision model nothing left one, so no cause is recorded.
   const over = probabilities === null && !!s.ref && tokensOf(items) > s.ref.maxInputTokens;
   if (s.ref) for (const a of unsure) causes.set(a, causeOf(over, probabilities, a.p, a.check, act));

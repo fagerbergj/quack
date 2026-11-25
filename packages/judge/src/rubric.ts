@@ -65,9 +65,12 @@ export type CheckResult = {
   marks?: string[];
   /** A grouped fold's groups the outer fold ran over; absent for other folds, and when no item applies or the split failed. */
   groups?: number;
-  /** Not run on this verdict: the check runs when a person approves the version, so its met is null and the score leaves it out. */
-  deferred?: 'approval';
+  /** Not run on this verdict, so its met is null and the score leaves it out: it runs when a person approves the version, or once a version passes its code gates. */
+  deferred?: Deferred;
 };
+
+/** Why a check did not run on a verdict. */
+export type Deferred = 'approval' | 'gate';
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
 

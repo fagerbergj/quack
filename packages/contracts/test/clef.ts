@@ -18,8 +18,8 @@ function readAs(state: Packed, instructions: string): string {
 }
 
 /** A stand-in for Clef on its wire format. A choice gets `pick(instructions)` (the first option by name when it gives none) at 0.95;
- * a bool gets an unknown answer type, so it escalates. */
-export async function fakeClef(t: TestContext, pick: (instructions: string) => string | undefined = () => undefined) {
+ * a bool gets `yes(instructions, state)` as its probability of yes. */
+export async function fakeClef(t: TestContext, pick: (instructions: string) => string | undefined = () => undefined, yes: (instructions: string, state: unknown) => number = () => 0.95) {
   const asked: string[][] = [];
   const requests: ClefRequest[] = [];
   const server = createServer(async (req, res) => {
@@ -36,7 +36,7 @@ export async function fakeClef(t: TestContext, pick: (instructions: string) => s
       const rest = options.filter((o) => o !== first);
       return { type: 'choice', choice: first, confidence: 0.95, probabilities: Object.fromEntries([[first, 0.95], ...rest.map((k) => [k, 0.05 / rest.length])]) };
     };
-    const answers = Object.fromEntries(questions.map((q) => [q, sent[q].type === 'choice' ? choice(sent[q]) : { type: 'noul', noul: 0.95 }]));
+    const answers = Object.fromEntries(questions.map((q) => [q, sent[q].type === 'choice' ? choice(sent[q]) : { type: 'noul', noul: yes(sent[q].instructions ?? '', state) }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));

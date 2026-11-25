@@ -1,6 +1,6 @@
 {
   "name": "researcher",
-  "version": 10,
+  "version": 11,
   "status": "draft",
   "prompt": "prompt.md",
   "extensions": {

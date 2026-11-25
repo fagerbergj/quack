@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
-import { PASS_ONLY } from '../src/declaration.ts';
+import { CONFIDENT_ONLY, PASS_ONLY } from '../src/declaration.ts';
 import { limiter } from '../src/limit.ts';
 import { answerItems, decisionModelTokens, pack, PROMPT_VERSION, type DecisionModelRef } from '../src/resolve.ts';
 import { reuseKey } from '../src/reuse.ts';
@@ -269,6 +269,20 @@ test('a confident fail stands on a check without the option and escalates on a p
   assert.equal(seen.prompts.length, 1);
 });
 
+test('a confident-only check keeps the decision model\'s confident pass and fail, and an unsure item holds without a judge-model call', async () => {
+  const style = { ...contradicts, id: 'c.style', decisionModel: CONFIDENT_ONLY };
+  const units = ['u0', 'u1', 'u2'].map((id) => ({ id, shared: { request: 'r' }, state: { report: id } }));
+  const { api, seen } = passOnlyApi([0.95, 0.03, 0.5], 'yes');
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [style] })), BACKGROUND_CONTEXT);
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.cause]), [
+    ['u0', true, 'clef', undefined],
+    ['u1', false, 'clef', undefined],
+    ['u2', true, 'clef', undefined],
+  ]);
+  assert.equal(seen.prompts.length, 0);
+});
+
 test('many confident fails on a pass-only check escalate one request each within the escalation limit', async () => {
   const shared = { request: 'r' };
   const units = Array.from({ length: 9 }, (_, i) => ({ id: `u${i}`, shared, state: { report: `u${i}` } }));
@@ -435,6 +449,7 @@ test('each item that leaves the decision model carries its cause, and one Clef s
   assert.equal(await causeOf(reply(0.05), ref, { decisionModel: PASS_ONLY }), 'pass-only-no');
   assert.equal(await causeOf(reply(0.95), ref, { decisionModel: false }), 'declared');
   assert.equal(await causeOf(reply(0.95), { ...ref, maxInputTokens: 1 }), 'over-window');
+  assert.equal(await causeOf(reply(0.95), { ...ref, maxInputTokens: 1 }, { decisionModel: CONFIDENT_ONLY }), 'over-window', 'a confident-only item Clef never answered still escalates');
   assert.equal(await causeOf(callApi(async () => ({ stopReason: 'error', answers: {}, errorMessage: '400 Bad Request' })), ref), 'refused');
   assert.equal(await causeOf(callApi(() => Promise.reject(new Error('503 busy'))), ref), 'outage');
 });

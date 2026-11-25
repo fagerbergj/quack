@@ -1,4 +1,4 @@
-// The research report's Markdown rules, one reader for the judge that names its items and the web that shows them.
+// The research report's Markdown rules: its sections, the source ids it cites, and its findings.
 
 const CITATION = /\[(s\d+)\]/g;
 const FENCE = /^\s*(`{3,}|~{3,})/;
@@ -72,15 +72,4 @@ export function findingItems(report: string): Array<{ first: string; text: strin
   const p: Parse = { items: [], open: [], para: [], intro: [], gap: false, fence: false };
   for (const s of splitReport(report).sections.filter((x) => x.name === 'findings')) for (const line of [...s.lines, '#']) readLine(p, line);
   return p.items.filter((i) => !leads(i)).map((i) => ({ first: i.lines[0].trim(), text: [...i.context, ...i.lines].join('\n') }));
-}
-
-const SENTENCE = /(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u;
-// A finding's sentences, each one claim; a lead-in ending in ":" only frames the bullets under it, so it claims nothing.
-export const sentencesOf = (text: string) => text.split('\n').map((l) => l.replace(/^\s*([-*]|\d+\.)\s+/, '').trim()).flatMap((l) => l.split(SENTENCE))
-  .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(CITATION, '')) && !/:[\s*_]*(\[s\d+\]\s*)*$/.test(t));
-
-/** The Nth finding's Kth sentence, marks stripped: the claim the research judge names "finding-N.K". */
-export function claimOf(report: string, n: number, k: number): string | undefined {
-  const f = findingItems(report)[n - 1];
-  return f && sentencesOf(f.text)[k - 1]?.replace(/\s*\[s\d+\]/g, '').trim();
 }

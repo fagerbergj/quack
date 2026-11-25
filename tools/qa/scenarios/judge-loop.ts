@@ -4,32 +4,36 @@ import { eachView, paneOf, visible, type Scenario } from '../scenario.ts';
 // The research agent through the judge extension, with the fake model as both writer and judge (no judgeModel: the agent's own).
 const SOURCE = 'https://example.com/';
 const GOOD = 'Example.com is reserved for examples in documents.';
-const BAD = 'Example.com is run by the moon.';
-// Six findings the judge answers slowly, so a step can watch a round's counts move.
-const LIVE = Array.from({ length: 6 }, (_, i) => `Example.com serves example ${i + 1}.`);
-const report = (...findings: string[]) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n${findings.map((f) => `- ${f} [s1]\n`).join('')}`;
+// A link to a page the session never fetched or found, so the link gate fails the revise flow's draft.
+const MOON = 'https://example.org/moon';
+const BAD = `Example.com is run by the moon, per ${MOON}.`;
+// A summary the judge finds both style problems in, so the limit flows fail on model checks; a gate-only failure is revised past the limit.
+const STYLE_BAD = 'Example.com is run by the moon, the sun, and the stars.';
+const FLAW = 'The opening packs three parallel items inline.';
+// Six sentences that could hold an inline list, which the judge answers slowly, so a step can watch a round's counts move.
+const LIVE = Array.from({ length: 6 }, (_, i) => `Example.com serves example ${i + 1}, its mirror and its archive.`);
+const report = (finding: string, assumptions = 'None.', summary = 'Example.com is a reserved example domain.') => `## Summary\n${summary}\n## Assumptions\n${assumptions}\n## Findings\n- ${finding} [s1]\n`;
 const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
 
-// supported_by_source finds BAD's claim silent in the source and GOOD's stated. The regex keys on the question wording in packages/research/src/report.ts.
-const verdict = (question: string, evidence: string) => (/state the claim\?/.test(question) ? (evidence.includes(BAD) ? 'silent' : 'states') : 'yes');
-const choice = (c: string) => ({ choice: c, confidence: 1, reason: 'qa' });
-
-// The judge asks one question of one item per request; it is answered from the whole request.
-function judgeReply(all: string, prompt: string) {
+// Every style question asks whether a unit has a problem; the judge finds one only in STYLE_BAD.
+function judgeReply(prompt: string) {
   const slow = /serves example \d/.test(prompt) ? { delayMs: 1500 } : {};
-  return { content: JSON.stringify(choice(verdict(all, all))), ...slow };
+  const flawed = prompt.includes(STYLE_BAD);
+  return { content: JSON.stringify({ choice: flawed ? 'yes' : 'no', confidence: 1, reason: flawed ? FLAW : 'qa' }), ...slow };
 }
+
+// The first draft per flow: a dead link for revise, style problems for the limit flows, slow items for live.
+const draft = (flow: string) => (flow.includes('flow:live') ? report(GOOD, LIVE.join('\n\n')) : flow.includes('flow:revise') ? report(BAD) : report(GOOD, 'None.', STYLE_BAD));
 
 // The writer's next move from the flow its input names and the last tool result; a request without tools is the judge asking.
 const script: FakeScript = ({ messages = [], tools = [] }) => {
-  const all = JSON.stringify(messages);
-  if (!tools.length) return judgeReply(all, text(messages.at(-1) ?? {}));
+  if (!tools.length) return judgeReply(text(messages.at(-1) ?? {}));
   const flow = text(messages.find((m) => m.role === 'user') ?? {});
   const last = messages.at(-1)?.role === 'tool' ? text(messages.at(-1)!) : '';
   const written = messages.filter((m) => m.role === 'tool' && /passed|failed/.test(text(m))).length;
   if (!last) return { tool: { name: 'web_fetch', arguments: { urls: [SOURCE] } } };
   if (/passed\.|Stop: this run is over/.test(last) || (/revision limit is reached/.test(last) && !flow.includes('flow:past'))) return { content: 'Done.' };
-  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: flow.includes('flow:live') ? report(...LIVE) : report(written ? GOOD : BAD) } } };
+  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: written ? report(GOOD) : draft(flow) } } };
   return { tool: { name: 'submit_report', arguments: {} } };
 };
 
@@ -61,9 +65,9 @@ const scenario: Scenario = {
     await ctx.step('revise then pass: a failing version comes back, the revision passes', async () => {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-revise', 'qa-judge-2', 'revise');
       expect(JSON.stringify(versions.map((v) => v.verdict?.passed)) === '[false,true]', 'verdicts', versions);
-      const check = versions[0].verdict?.checks?.find((c) => c.id === 'supported_by_source');
-      expect(check?.met === 0 && check.label === "A claim its sources don't back", 'supported_by_source judged the claim (a dropped claim unit would pass the draft)', versions[0]);
-      expect(/missed claims_grounded\.supported_by_source/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
+      const check = versions[0].verdict?.checks?.find((c) => c.id === 'links_retrieved');
+      expect(check?.met === 0.5 && check.label === 'Links a page it never fetched or found', 'links_retrieved failed the unfetched link and passed [s1]', versions[0]);
+      expect(/gate links\.links_retrieved: https:\/\/example\.org\/moon was neither fetched nor in a search result/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
       expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Version 2 is final for this run; finish without revising it\./.test(results), 'the pass note', results);
     });
     await ctx.step('limit release: a failing version at the limit goes out with its failures marked', async () => {
@@ -77,13 +81,13 @@ const scenario: Scenario = {
       expect(/research\.report v1 is delivered, so it is final for this run and this change to artifacts\/report\.md was not sealed\./.test(results), 'the first refusal', results);
       expect(/research\.report v1 is delivered\. A second change after it was not sealed either, so this run is over\./.test(results), 'the second refusal', results);
     });
-    await eachView(ctx, 'the released report opens on its failing check, marked, counted, and its claim read from the report', async (page, label) => {
+    await eachView(ctx, 'the released report opens on its failing style checks, marked, with the judge\'s reason', async (page, label) => {
       await page.goto(`${ctx.url}/#/s/qa-judge-limit`);
       if (label.startsWith('400')) await page.getByRole('tab', { name: /^Report/ }).click();
       else await page.getByRole('button', { name: 'Show Report' }).click();
       const pane = paneOf(page, 'Report');
       await visible(pane.getByRole('img', { name: 'Failed' }).first());
-      await visible(pane.getByText(`“${BAD}”`).first());
+      await visible(pane.getByText(FLAW).first());
       await ctx.shot(page, `judge-loop-limit-${label}`);
     });
     await eachView(ctx, "a running double-check counts its items done, over a bar of who settled them", async (page, label) => {
