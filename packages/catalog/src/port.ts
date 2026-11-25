@@ -7,8 +7,8 @@ export type Json = null | boolean | number | string | Json[] | { [field: string]
 /** ISO 4217 code and an int64 count of millionths; unpriced spend is 0n in the deployment's currency, never absent. */
 export type Money = { currencyCode: string; amountMicros: bigint };
 
-/** The server-set actor: a person the proxy authenticated, or the tailnet itself. */
-export type Principal = { kind: 'person'; id: string } | { kind: 'tailnet' };
+/** The server-set actor: a person the proxy authenticated, the tailnet itself, or a session's approve-time checks, which reject on a finding. */
+export type Principal = { kind: 'person'; id: string } | { kind: 'tailnet' } | { kind: 'checks' };
 
 /** Cumulative token counts by kind since the session's start. */
 export type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number };
@@ -41,6 +41,8 @@ export type SessionRow = {
   cost: Money;
   tokens: TokenUsage;
   pendingAsks: number;
+  /** Asks whose answer the session is checking before it records it; they wait on no one. */
+  checkingAsks: number;
   oldestAskAt?: number;
   lastRun?: { outcome: RunOutcome; endedAt: number; failedSteps: FailedStep[] };
   /** A full-text source of the session list only, never otherwise surfaced. */
@@ -49,7 +51,8 @@ export type SessionRow = {
 
 export type AskType = 'approval' | 'question';
 
-export type AskState = 'pending' | 'resolved' | 'cancelled';
+/** checking: a person answered and the session checks the answer before recording it; it then resolves, or is pending again. */
+export type AskState = 'pending' | 'checking' | 'resolved' | 'cancelled';
 
 export type AskPrompt = {
   question: string;
@@ -212,7 +215,9 @@ export interface SessionCatalogStore {
     toolCall?: { tool: string; args: Json };
     prompt?: AskPrompt;
   }): Promise<void>;
-  /** Applies only while pending; by is stored as given. */
+  /** ask.held: pending becomes checking while `held`, and checking pending again once not; any other state is left. */
+  holdAsk(write: EventWrite, change: { key: string; id: string; held: boolean }): Promise<void>;
+  /** Applies only while pending or checking; by is stored as given. */
   resolveAsk(write: Write, change: {
     key: string;
     id: string;
@@ -222,7 +227,7 @@ export interface SessionCatalogStore {
     reason?: string;
     resolvedAt: number;
   }): Promise<{ applied: boolean; ask?: AskRow }>;
-  /** ask.cancelled: applies only while pending. */
+  /** ask.cancelled: applies only while pending or checking. */
   cancelAsk(write: EventWrite, change: { key: string; id: string }): Promise<void>;
   getAsk(key: string, id: string): Promise<AskRow | undefined>;
   listAsks(options: ListOptions<AskField, AskOrder>): Promise<ListPage<AskRow>>;

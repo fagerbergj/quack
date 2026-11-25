@@ -78,17 +78,20 @@ const approval = gated(defineTool({
 }) as ToolRegistration, { subject: (args) => ({ kind: CONTRACT_KIND, version: (args as Proposed).artifact! }) });
 
 type Outcome = { text: string; isError?: boolean };
+// How the gate opens a rejection the approve-time checks made.
+const CHECKED = 'Not approved: the checks found problems';
 const NOT_NEWEST: Outcome = { text: 'Only the newest sealed version can be put up for approval, once it passes its checks; write artifacts/spec.json and call submit_contract.', isError: true };
 const textOf = (r: { output?: Array<{ type: string; text?: string }> }) => r.output?.map((p) => p.text ?? '').join('') ?? '';
 
 // What the agent is told after a rejection; a review's block ends the reason, so what follows starts on a line of its own.
 function rejectedText(text: string, version: number, was: ContractSpec | undefined): Outcome {
   const against = was ? `with baseline ${was.version} and its changes and compatibility measured against that approved version` : 'with changes and compatibility only if its baseline is "shipped", never measured against this rejected version';
-  // The gate says "Rejected by <who>: <reason>", and a reason with no note opens with its block.
+  // The gate says "Rejected by <who>: <reason>", and a reason with no note opens with its block; the checks' rejection carries no review.
   const review = !!lastReviewBlock(text.replace(/^Rejected by [^:\n]*: /, ''));
+  const said = text.startsWith(CHECKED) ? 'what the checks found' : 'what the person said, in this reason or in the message that follows it';
   const comments = review ? ' The reason ends in a ```quack-review block of review comments: for each comment, name its id in the addresses of the changes row that changes what it is about, or call reply_comment with its id, before you submit, to say why you left it; the check fails a version that does neither for any of them.' : '';
   const drop = was ? `; if the person wants to drop this version and keep version ${was.version}, call discard_draft` : '';
-  return { text: `${text}${review ? '\n\n' : '. '}Act on what the person said, in this reason or in the message that follows it: for a change, write version ${version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${version} up again${drop}.${comments}`, isError: true };
+  return { text: `${text}${review ? '\n\n' : '. '}Act on ${said}: for a change, write version ${version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${version} up again${drop}.${comments}`, isError: true };
 }
 
 /** Puts one sealed version before the person and waits: only the newest, only once it passed, never one already approved. The facts the
@@ -111,7 +114,7 @@ export async function proposeVersion(sealed: SealedArtifact, api: ToolExecutionA
   await reconcile(api, ctx);
   if (!verdict.isError) return { text: `Version ${spec.version} is approved.` };
   const text = textOf(verdict as never);
-  if (!text.startsWith('Rejected by')) return { text, isError: true };
+  if (!text.startsWith('Rejected by') && !text.startsWith(CHECKED)) return { text, isError: true };
   return rejectedText(text, spec.version, was);
 }
 

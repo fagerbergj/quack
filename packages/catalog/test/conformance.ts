@@ -83,7 +83,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       const { store } = await fresh();
       await store.migrate();
       await store.createSession(event('c', 1), { key: 'k', agent: 'quack', createdAt: T0 });
-      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
+      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0, checkingAsks: 0 });
       await store.setTitle(event('title', 2), { key: 'k', title: 'Default' });
       await store.transitionSession(event('r', 3), { key: 'k', to: 'running' });
       await store.openAsk(event('o1', 4), { key: 'k', id: 'a1', type: 'approval', createdAt: T0 + 5, toolCall: { tool: 'merge', args: { pr: 1 } } });
@@ -105,7 +105,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.setTitle(action('rename'), { key: 'k', title: 'Mine' });
       assert.deepEqual(await store.getSession('k'), {
         key: 'k', agent: 'quack', title: 'Mine', state: 'idle', createdAt: T0, lastActivity: T0 + 50, cost: usd(1_250_000n), tokens: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8 },
-        pendingAsks: 0, lastRun: { outcome: 'failed', endedAt: T0 + 50, failedSteps: [{ step: 's', error: 'e' }] }, lastMessage: 'last words',
+        pendingAsks: 0, checkingAsks: 0, lastRun: { outcome: 'failed', endedAt: T0 + 50, failedSteps: [{ step: 's', error: 'e' }] }, lastMessage: 'last words',
       });
       await store.setTitle(action('restore'), { key: 'k', title: null });
       assert.equal((await store.getSession('k'))?.title, 'Default', 'a null rename restores the default');
@@ -125,6 +125,23 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.recordRunOutcome(event('run:2:ended', 18), { key: 'k', outcome: 'failed', endedAt: T0 + 60, failedSteps: [{ step: 'model', error: 'gone' }] });
       assert.deepEqual(await store.transitionSession(event('state:run:3:resume:1', 19), { key: 'k', to: 'running' }), { applied: false, state: 'running' });
       assert.equal((await store.getSession('k'))?.lastRun, undefined, 'a refused running move still clears lastRun');
+    });
+
+    test('a held ask is checking, counted apart from pending; released it is pending again, and it resolves or cancels from either', async () => {
+      const { store } = await fresh();
+      await store.migrate();
+      await store.createSession(event('c', 1), { key: 'k', agent: 'quack', createdAt: T0 });
+      for (const [i, id] of ['a', 'b', 'c'].entries()) await store.openAsk(event(`o${id}`, 2 + i), { key: 'k', id, type: 'approval', createdAt: T0 + i, toolCall: { tool: 'merge', args: null } });
+      for (const [i, id] of ['a', 'b', 'c'].entries()) await store.holdAsk(event(`h${id}`, 5 + i), { key: 'k', id, held: true });
+      const counts = async () => { const r = (await store.getSession('k'))!; return [r.pendingAsks, r.checkingAsks, r.oldestAskAt]; };
+      assert.deepEqual(await counts(), [0, 3, undefined], 'nothing waits on a person');
+      await store.holdAsk(event('ha2', 8), { key: 'k', id: 'a', held: false });
+      assert.deepEqual([(await store.getAsk('k', 'a'))?.state, ...(await counts())], ['pending', 1, 2, T0]);
+      assert.equal((await store.resolveAsk(event('rb', 9), { key: 'k', id: 'b', by: { kind: 'checks' }, choice: 'reject', reason: 'found', resolvedAt: T0 + 9 })).applied, true);
+      await store.cancelAsk(event('cc', 10), { key: 'k', id: 'c' });
+      await store.holdAsk(event('hb2', 11), { key: 'k', id: 'b', held: false });
+      assert.deepEqual([(await store.getAsk('k', 'b'))?.resolution?.by, (await store.getAsk('k', 'c'))?.state, (await store.getAsk('k', 'b'))?.state], [{ kind: 'checks' }, 'cancelled', 'resolved']);
+      assert.deepEqual(await counts(), [1, 0, T0]);
     });
 
     test('(2) replay is a no-op, and a same-id event at a higher seq supersedes once', async () => {
@@ -393,7 +410,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       assert.deepEqual(await snapshot(store, 'k'), { session: undefined, watermark: undefined, asks: [], artifacts: [] });
       const fresh2 = stream('k', 'incarnation-2');
       await catalog.publish('k', fresh2.events);
-      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
+      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0, checkingAsks: 0 });
     });
 
     test("a default title set under each change's own id never covers a person's rename, live or rebuilt", async () => {

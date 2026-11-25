@@ -14,6 +14,7 @@ export type CoreEvent = { seq: number; id: string; at: number } & (
   | { type: 'ask.opened'; data: { id: string; type: AskType; createdAt: number; toolCall?: { tool: string; args: Json }; prompt?: AskPrompt } }
   | { type: 'ask.resolved'; data: { id: string; choice: string; text?: string; reason?: string; by: Principal } }
   | { type: 'ask.cancelled'; data: { id: string; run: number } }
+  | { type: 'ask.held'; data: { id: string; held: boolean } }
   | { type: 'artifact.sealed'; data: ArtifactSeal }
   | { type: 'spend.recorded'; data: { cost: Money; tokens: TokenUsage } }
   | { type: 'title.set'; data: { title: string } }
@@ -97,6 +98,7 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
     'ask.opened': (key, w, e) => store.openAsk(w, { key, ...e.data }),
     'ask.resolved': (key, w, e) => store.resolveAsk(w, { key, ...e.data, resolvedAt: e.at }),
     'ask.cancelled': (key, w, e) => store.cancelAsk(w, { key, id: e.data.id }),
+    'ask.held': (key, w, e) => store.holdAsk(w, { key, ...e.data }),
     'title.set': (key, w, e) => store.setTitle(w, { key, title: e.data.title }),
     'artifact.sealed': (key, w, { at, data: { sealedAt, ...seal } }) => store.sealArtifact(w, { key, ...seal, sealedAt: sealedAt ?? at }),
     'spend.recorded': async (key, w, e) => {

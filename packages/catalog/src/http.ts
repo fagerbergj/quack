@@ -48,7 +48,7 @@ class Problem extends Error {
 
 export const sessionWire = (s: SessionRow) => ({
   key: s.key, agent: s.agent, ...(s.title !== undefined && { title: s.title }), state: s.state, createdAt: iso(s.createdAt), lastActivity: iso(s.lastActivity),
-  cost: { currencyCode: s.cost.currencyCode, amountMicros: s.cost.amountMicros.toString() }, tokens: s.tokens, pendingAsks: s.pendingAsks,
+  cost: { currencyCode: s.cost.currencyCode, amountMicros: s.cost.amountMicros.toString() }, tokens: s.tokens, pendingAsks: s.pendingAsks, checkingAsks: s.checkingAsks,
   ...(s.oldestAskAt !== undefined && { oldestAskAt: iso(s.oldestAskAt) }),
   ...(s.lastRun && { lastRun: { outcome: s.lastRun.outcome, endedAt: iso(s.lastRun.endedAt), failedSteps: s.lastRun.failedSteps } }),
 });
@@ -160,12 +160,12 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     const resolution = resolutionOf(await body(req));
     const ask = await catalog.getAsk(key, id);
     if (!ask) throw new Problem(404, 'no such ask');
-    const taken = ask.state === 'pending' && (await deps.answer(key, ask, { by, ...resolution }));
+    const taken = (ask.state === 'pending' || ask.state === 'checking') && (await deps.answer(key, ask, { by, ...resolution }));
     if (typeof taken === 'string') throw new Problem(400, taken);
-    // A held approve stays pending here; the session's lifecycle stream resolves it once its checks pass, or it waits again.
-    if (typeof taken === 'object' && 'held' in taken) return askWire(ask);
+    // The session's lifecycle stream moves a held approve to checking, then resolves it or makes it pending again.
+    if (typeof taken === 'object' && 'held' in taken) return { ...askWire(ask), state: 'checking' };
     if (typeof taken === 'object' || ask.state === 'cancelled') throw new Problem(409, withdrawnText(typeof taken === 'object' ? taken.withdrawn : undefined));
-    if (!taken) throw new Problem(409, `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}`);
+    if (!taken) throw new Problem(409, `the ask is ${ask.state === 'resolved' ? ask.state : 'already answered'}`);
     await catalog.resolve(key, id, { by, ...resolution });
     return askWire((await catalog.getAsk(key, id))!);
   }

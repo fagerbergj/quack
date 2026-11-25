@@ -253,6 +253,23 @@ test("deciders recorded by today's code, a {name} or a bare string, reach the ch
   assert.deepEqual(events.filter((e) => e.type === 'ask.resolved').map((e) => e.data.by), [{ kind: 'person', id: 'jason' }, { kind: 'person', id: 'alice' }, { kind: 'tailnet' }, { kind: 'tailnet' }]);
 });
 
+test('an approve being checked holds its ask; failed checks resolve it as a rejection by the checks, checks that could not run release it', () => {
+  const asked = { tool: 't', args: null, requestedAt: 1, verdict: null, executing: false, done: false, subject: { kind: 'k', version: 1 } };
+  const approve = { decision: 'approve' as const, reason: null, by: { kind: 'person' as const, name: 'jf' }, at: 5 };
+  const checks = (decided: boolean) => ({ at: 9, passed: false, decided, feedback: ['found'], detail: null });
+  const items = {
+    a: { ...asked, approving: approve },
+    b: { ...asked, checks: checks(true), verdict: { decision: 'reject' as const, reason: 'found', by: { kind: 'checks' as const }, at: 9 } },
+    c: { ...asked, checks: checks(false) },
+  };
+  const events = currentEvents('r', facts, { approvals: { items }, runs: [], spend: none, spentMicros: 0n }).filter((e) => e.type.startsWith('ask.'));
+  assert.deepEqual(events.map((e) => [e.id, e.type, e.data.held ?? e.data.by ?? null]), [
+    ['ask:open:a', 'ask.opened', null], ['ask:hold:a', 'ask.held', true],
+    ['ask:open:b', 'ask.opened', null], ['ask:hold:b', 'ask.held', false], ['ask:resolve:b', 'ask.resolved', { kind: 'checks' }],
+    ['ask:open:c', 'ask.opened', null], ['ask:hold:c', 'ask.held', false],
+  ]);
+});
+
 test('a process that comes up without a run reports idle, after the distributor recorded it stopped', async () => {
   const h = await harness();
   await h.catalog.stopped(KEY);

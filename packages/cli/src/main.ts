@@ -176,7 +176,8 @@ async function asks(c: Client, pos: string[], o: Opts): Promise<Result> {
 
 async function answer(c: Client, [key, id, ...choice]: string[], o: Opts): Promise<Result> {
   if (!key || !id || !choice.length) throw usageError('usage: quack answer <key> <askId> <choice> [--text T] [--reason R]');
-  return ok(await c.resolve(key, id, { choice: choice.join(' '), ...(o.text && { text: o.text }), ...(o.reason && { reason: o.reason }) }));
+  const r = await c.resolve(key, id, { choice: choice.join(' '), ...(o.text && { text: o.text }), ...(o.reason && { reason: o.reason }) });
+  return { data: r, text: r.state === 'checking' ? 'checking: approved once its checks pass, else sent back to the agent with what they found' : 'ok' };
 }
 
 // An approval's answer with its choice filled in; a reason may also follow the id.

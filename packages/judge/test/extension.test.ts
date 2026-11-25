@@ -164,12 +164,11 @@ const askToPublish = (approver: (s: Session) => Promise<void>) => async (s: Sess
 
 test("a check declared for approval skips every seal and runs on a person's approve of the version, for any kind with a gated tool", async () => {
   let held: Approval['checks'];
-  // The person approves, reads the findings the gate held it open with, and approves again over them.
+  // The person approves once; the findings reject it, by the checks, with nothing more asked of them.
   const approver = async (s: Session) => {
     const id = await untilApprovals(s, (items) => Object.keys(items)[0]);
     await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
     held = await untilApprovals(s, (items) => items[id].checks ?? undefined);
-    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
   };
   const rude = fauxAssistantMessage('{"choice": "no", "confidence": 0.9, "reason": "no greeting"}');
   // The judge model is the agent's own: asked once, on the approve, never at the seal.
@@ -180,7 +179,8 @@ test("a check declared for approval skips every seal and runs on a person's appr
   const detail = held?.detail as { passed: boolean; checks: Array<{ id: string; met: unknown }> };
   assert.deepEqual([held?.passed, detail.passed, detail.checks.find((c) => c.id === 'polite')?.met], [false, false, false]);
   assert.match(held!.feedback.join(''), /missed manner\.polite: intro: no greeting/);
-  assert.match(r.seen[4], /published/);
+  assert.match(r.seen[4], /Not approved: the checks found problems:\\n[^"]*missed manner\.polite: intro: no greeting/);
+  assert.doesNotMatch(r.seen[4], /Rejected by|published/);
   assert.equal(r.answer, 'Done.');
 });
 

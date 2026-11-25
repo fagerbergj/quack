@@ -261,37 +261,20 @@ test('a draft seals on its code checks with no model call; the model checks run 
   await s.close();
 });
 
-test('failing model checks hold the approval open with their findings; a plain approve then records it over them, asking no model again', async (t) => {
-  judgeSays(t, 'no');
-  const s = await settings([() => fauxAssistantMessage('Version 1 is approved.')]);
-  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
-  const p = await nextProposal(s);
-  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx), true);
-  const held = await checksOf(s, p.id);
-  assert.equal(held.passed, false);
-  assert.match(held.feedback.join('\n'), /missed matches_intent\.meets_intent[\s\S]*no field carries it/);
-  assert.equal(held.detail.checks.find((c) => c.id === 'meets_intent')?.met, false);
-  assert.deepEqual((await pendingApprovals(s.root, ctx)).map((a) => a.id), [p.id], 'the approval waits on the person again');
-  assert.equal((await kindOf(s, 'contract.approved')).length, 0, 'nothing is approved while the findings stand');
-  const asked = judge.asked;
-  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', reason: 'Approved over the findings', by: jf }, ctx), true);
-  assert.equal((await run).status, 'done');
-  assert.equal(judge.asked, asked, 'approving anyway runs no model check');
-  assert.deepEqual((await kindOf(s, 'contract.approved')).map((r) => JSON.parse(r.content).approval), [p.id]);
-  await s.close();
-});
-
-test('findings sent back with Ask for changes reach the agent as a rejection to revise', async (t) => {
+test('failing approve-time checks reject the version by the checks: the agent revises against the findings and nothing waits on the person', async (t) => {
   judgeSays(t, 'no');
   let seen = '';
   const s = await settings([(c) => ((seen = text(c)), fauxAssistantMessage('Revising.')), () => fauxAssistantMessage('Later.')]);
   const run = s.submit('Define the Sleeper settings file', 'r-1', true);
   const p = await nextProposal(s);
-  await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx);
-  const held = await checksOf(s, p.id);
-  assert.equal(await resolveApproval(s.root, p.id, { decision: 'reject', reason: held.feedback.join('\n'), by: jf }, ctx), true);
+  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx), true);
   await run;
-  assert.match(seen, /Rejected by jf: contract\.spec v1: [\s\S]*missed matches_intent\.meets_intent[\s\S]*write version 2/);
+  const row = await rowOf(s, p.id);
+  assert.deepEqual([(row.verdict as { decision: string; by: unknown }).decision, (row.verdict as { by: unknown }).by], ['reject', { kind: 'checks' }]);
+  assert.deepEqual((await pendingApprovals(s.root, ctx)).map((a) => a.id), [], 'nothing waits on the person');
+  assert.doesNotMatch(seen, /Rejected by/);
+  assert.match(seen, /Not approved: the checks found problems:\ncontract\.spec v1: [\s\S]*missed matches_intent\.meets_intent[\s\S]*Act on what the checks found: for a change, write version 2/);
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0);
   await s.close();
 });
 

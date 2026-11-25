@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest';
 import type { Failure, Session } from './api.ts';
 import { look, sessionTitle } from './kinds.ts';
-import { rowOf } from './sessions.ts';
+import { contractOf } from './extensions/contracts/status.ts';
+import { group, rowOf } from './sessions.ts';
 import { sess } from './test-harness.ts';
 
 const s = (key: string, over: Partial<Session> = {}) => sess(key, over) as Session;
@@ -51,6 +52,15 @@ test('an idle row reads how its last run ended, from the catalog row alone', () 
   expect(look(row('remarkable:d1')).line).toBe('Not transcribed yet');
   expect(look(row('remarkable:d1', ended('aborted'))).line).toBe('Stopped');
   expect(look(row('remarkable:d1', { state: 'running', ...ended('succeeded') })).line).toBe('Transcribing');
+});
+
+test('an approve being checked reads Approving, muted, and puts the session in no Needs you group; a pending ask beside it still waits', () => {
+  const checking = row('contracts:c1', { state: 'running', checkingAsks: 1 });
+  expect(look(checking)).toMatchObject({ line: 'Approving…', tone: 'muted', why: "Making sure it does what it says before it's approved; nothing needs you" });
+  expect(group([checking]).needs).toEqual([]);
+  expect(contractOf(checking)).toMatchObject({ mark: 'draft', status: 'Approving…' });
+  const both = row('contracts:c2', { state: 'running', checkingAsks: 1, pendingAsks: 1 });
+  expect([look(both).line, group([both]).needs.length, contractOf(both).mark]).toEqual(['Waiting on you', 1, 'need']);
 });
 
 test('a failed last run reads its step until a new run works on it; pending asks read as waiting', () => {

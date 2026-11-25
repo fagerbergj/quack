@@ -14,7 +14,7 @@ export type SessionState = 'running' | 'idle' | 'stopped' | 'archived';
 /** A session row of the catalog; dates are RFC 3339. */
 export type Session = {
   key: string; agent: string; title?: string; state: SessionState; createdAt: string; lastActivity: string; cost: Money; tokens: Tokens;
-  pendingAsks: number; oldestAskAt?: string; waiting?: ModelWait; lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Failure[] };
+  pendingAsks: number; /** Asks a person answered whose answer the session is checking; they wait on no one. */ checkingAsks?: number; oldestAskAt?: string; waiting?: ModelWait; lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Failure[] };
 };
 export const spendOf = (s: Pick<Session, 'cost' | 'tokens'>): Spend => ({ cost: Number(s.cost.amountMicros) / 1e6, tokens: s.tokens });
 export type AgentSummary = { name: string; version: number; status: 'draft' | 'promoted'; model?: string; description?: string };
@@ -24,7 +24,7 @@ export type AgentDetail = { name: string; version: number; status: 'draft' | 'pr
 /** What the approval gates found on a person's approve; `decided` is false when they could not run (no model answered), and `detail`
  * is the judge's verdict when the judge checked it. */
 export type ApprovalChecks = { at: number; passed: boolean; decided?: boolean; feedback: string[]; detail: Verdict | null };
-/** `approving`: the person's approve is being checked; `checks`: the last approve's checks, which failed or could not run (see ApprovalChecks). */
+/** `approving`: the person's approve is being checked; `checks`: the last approve's checks, which could not run (a failure rejects it). */
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number; approving?: boolean; checks?: ApprovalChecks };
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; /** A decided yes/no fold sends a boolean; only a number is a share. */ met: boolean | number | null; notes: string[]; scope?: string; /** Items the check ran over, or the groups of a grouped fold; `marks` set means it counts none. */ units?: number; groups?: number; marks?: string[];
   /** Settled items by resolver: `code`, or the modelId that answered; `reused` maps items answered in an earlier round to that version. */ resolvers?: Record<string, number>; reused?: Record<string, number>;
@@ -125,8 +125,8 @@ export type Question = { id: string; question: string; options: string[]; eviden
 type Prompt = Omit<Question, 'id' | 'askedAt' | 'evidence' | 'freeText'> & { evidence?: string | null; freeText: boolean };
 /** An approval or a question of one session, as the Sessions API lists them. */
 export type Ask = {
-  session: string; id: string; type: 'approval' | 'question'; state: 'pending' | 'resolved' | 'cancelled'; createdAt: string; resolvedAt?: string;
-  resolution?: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string };
+  session: string; id: string; type: 'approval' | 'question'; state: 'pending' | 'checking' | 'resolved' | 'cancelled'; createdAt: string; resolvedAt?: string;
+  resolution?: { by: { kind: 'person'; id: string } | { kind: 'tailnet' } | { kind: 'checks' }; choice: string; text?: string; reason?: string };
   toolCall?: { tool: string; args: unknown }; prompt?: Prompt;
 };
 /** Asks across sessions, oldest first, or one session's; `state:pending` is everything waiting on a person. */

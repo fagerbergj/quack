@@ -8,10 +8,12 @@ const DRAFT = '#/s/contracts%3Aqa-draft';
 
 const text = (m?: { content?: unknown }) => (typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''));
 const no = { choice: 'no', confidence: 1, reason: 'No field, status code or schema rule in the document carries it.' };
+// Until then the checks' answers are held back, so the steps can watch an approve being checked.
+let holdUntil = 0;
 // The model checks an approve runs fail every guarantee ("Decision:" prompts); any other turn just answers.
 const script: FakeScript = ({ messages = [] }) => {
   const asked = text(messages.at(-1));
-  if (asked.startsWith('Decision:')) return { content: JSON.stringify(no) };
+  if (asked.startsWith('Decision:')) return { content: JSON.stringify(no), delayMs: Math.max(0, holdUntil - Date.now()) };
   return { content: 'Noted.' };
 };
 
@@ -164,29 +166,50 @@ const scenario: Scenario = {
         await context.close();
       }
     });
-    await ctx.step('approving the waiting version runs the model checks, and their findings hold it open', () => approveSchedule(ctx, 'Approve v2', async (page, bar) => {
-      await bar.getByRole('button', { name: 'Model checks failed' }).waitFor({ timeout: 60_000 });
-      if (await page.getByRole('button', { name: 'Version: v2, approved' }).count()) throw new Error('v2 was approved over failing checks');
-    }));
-    await eachView(ctx, 'the approval with findings: failing items first, Approve anyway and Send to the agent', async (page, label) => {
+    await ctx.step('approving the waiting version reads Approving while the checks run', () => {
+      holdUntil = Date.now() + 75_000;
+      return approveSchedule(ctx, 'Approve v2', async (_page, bar) => visible(bar.getByText('Approving v2…')));
+    });
+    await eachView(ctx, 'while the checks run nothing needs you: no Waiting on you, no count, no Needs you row', async (page, label) => {
       await page.goto(`${ctx.url}/${SCHEDULE}`);
       const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
-      await visible(bar.getByRole('button', { name: 'Model checks failed' }));
-      await ctx.shot(page, `studio-findings-bar-${label}`);
-      await bar.getByRole('button', { name: 'Model checks failed' }).click();
-      const sheet = page.getByRole('dialog', { name: 'Approve v2?' });
-      await visible(sheet.getByRole('heading', { name: 'Model checks' }));
-      await visible(sheet.getByText('The revision must fix'));
-      if (await sheet.getByRole('button', { name: 'Approve v2' }).count()) throw new Error('a plain approve is offered over the findings');
-      await visible(sheet.getByRole('button', { name: 'Approve anyway' }));
-      await visible(sheet.getByRole('button', { name: 'Send to the agent' }));
-      await ctx.shot(page, `studio-findings-sheet-${label}`);
-    }, [{ width: 1280, height: 800 }, { width: 390, height: 800 }]);
-    await ctx.step('Approve anyway records the waiting version over the findings', () => approveSchedule(ctx, 'Approve anyway', async (page, bar) => {
-      await visible(page.getByRole('button', { name: 'Version: v2, approved' }));
-      await visible(bar.getByText('v2 is approved'));
-      await ctx.shot(page, 'studio-approved-1280');
-    }));
+      await visible(bar.getByText('Approving v2…'));
+      await visible(page.getByRole('status').filter({ hasText: /^Approving…$/ }));
+      if (await page.getByRole('status').filter({ hasText: /^Waiting on you$/ }).count()) throw new Error('the header says it waits on you');
+      await visible(paneOf(page, 'Contract').getByRole('button', { name: 'Version: v2, approving' }));
+      if (label.startsWith('400') && !(await page.getByRole('tab', { name: 'Contract', exact: true }).count())) throw new Error('the Contract tab carries a count');
+      await ctx.shot(page, `studio-approving-${label}`);
+      await page.goto(`${ctx.url}/#/sessions`);
+      const row = page.getByRole('region', { name: 'Sessions' }).getByRole('link', { name: /Sleeper schedule endpoint/ });
+      await visible(row.getByText('Approving…'));
+      if (await page.getByRole('region', { name: 'Needs you' }).getByRole('link', { name: /Sleeper schedule endpoint/ }).count()) throw new Error('the session is in Needs you');
+      await ctx.shot(page, `sessions-approving-${label}`);
+    });
+    await ctx.step('when the checks find problems the version is sent back to the agent, with nothing asked of the person', async () => {
+      const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
+      try {
+        const page = await context.newPage();
+        await page.goto(`${ctx.url}/${SCHEDULE}`);
+        const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
+        await bar.getByText(/^v2 wasn't approved: \d+ problems? found$/).waitFor({ timeout: 120_000 });
+        if (await page.getByRole('button', { name: 'Version: v2, approved' }).count()) throw new Error('v2 was approved over failing checks');
+      } finally {
+        await context.close();
+      }
+    });
+    await eachView(ctx, "a version the checks turned down reads wasn't approved, with the problem, and is not in Needs you", async (page, label) => {
+      await page.goto(`${ctx.url}/${SCHEDULE}`);
+      const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
+      await visible(bar.getByText(/^v2 wasn't approved: /));
+      await visible(bar.getByText(/No field, status code or schema rule/).first());
+      if (await bar.getByRole('button', { name: /Approve|Send to the agent/ }).count()) throw new Error('the bar offers a decision');
+      if (await bar.getByText(/Rejected by|Asked by|contract\.spec/).count()) throw new Error('the bar names a person or the rubric');
+      await ctx.shot(page, `studio-not-approved-${label}`);
+      await page.goto(`${ctx.url}/#/sessions`);
+      await visible(page.getByRole('region', { name: 'Sessions' }).getByRole('link', { name: /Sleeper schedule endpoint/ }));
+      if (await page.getByRole('region', { name: 'Needs you' }).getByRole('link', { name: /Sleeper schedule endpoint/ }).count()) throw new Error('the session is in Needs you');
+      await ctx.shot(page, `sessions-not-approved-${label}`);
+    });
   },
 };
 export default scenario;
