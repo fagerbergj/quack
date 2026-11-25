@@ -30,7 +30,8 @@ import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 import { composerKeyDown } from './composer.ts';
 
 type Standing = { questions: Question[]; failures: Failure[]; approvals: Approval[] };
-type Queued = { id: string; text: string };
+// `failed`: the distributor gave up starting the session for it; Send now retries it.
+type Queued = { id: string; text: string; failed?: string };
 type Frame = { type: 'queued'; items: Queued[] } | { type: 'waiting'; waiting: ModelWait | null } | { type: 'artifacts'; artifacts: SealedArtifact[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
 
 let nextRequest = 0;
@@ -123,13 +124,15 @@ function useSocket(key: string, agent: string | undefined) {
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
 
 // A message sent while a run works is a follow-up queued in the session, so a reload or a closed tab keeps it.
-function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void; onRemove: () => void }) {
+function QueuedChip({ text, failed, onNow, onRemove }: { text: string; failed?: string; onNow: () => void; onRemove: () => void }) {
   return (
     <div className="pointer-events-auto flex max-w-[92%] items-center gap-1 self-end rounded-2xl border border-line-strong bg-soft py-0.5 pr-0.5 pl-3">
-      <span className="flex-none text-[12px] text-muted">Queued</span>
+      {failed === undefined
+        ? <span className="flex-none text-[12px] text-muted">Queued</span>
+        : <span className="flex-none text-[12px] text-danger" title={failed}>Couldn't send<span className="sr-only">: {failed}</span></span>}
       <span className="min-w-0 truncate text-[13.5px]">{text}</span>
-      <button type="button" onClick={onNow} className={`${chipBtn} px-2.5 text-link`}>Send now</button>
-      <button type="button" aria-label="Remove queued message" onClick={onRemove} className={`${chipBtn} grid w-11 place-items-center text-muted hover:text-ink lg:w-8`}>
+      <button type="button" onClick={onNow} className={`${chipBtn} px-2.5 text-link`}>{failed === undefined ? 'Send now' : 'Retry'}</button>
+      <button type="button" aria-label={failed === undefined ? 'Remove queued message' : 'Discard message'} onClick={onRemove} className={`${chipBtn} grid w-11 place-items-center text-muted hover:text-ink lg:w-8`}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
     </div>
@@ -163,7 +166,7 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
   const btn = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50';
   return (
     <>
-      {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
+      {queued.map((q) => <QueuedChip key={q.id} text={q.text} failed={q.failed} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
       <Pending attach={attach} />
       {stopError && <p role="alert" className="pointer-events-auto m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2 text-[13px] text-danger">{stopError}</p>}
       <form onSubmit={submit} {...attach.handlers} className="focus-ring pointer-events-auto flex flex-col rounded-[26px] bg-soft py-1.5 shadow-lift ring-1 ring-line-strong transition">
@@ -475,7 +478,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
-      {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
+      {manage && dialog === 'delete' && <DeleteDialog name={name.full} queued={queued.length} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <PaneTabs live={live} />
       <div ref={split.row} style={split.style} className="flex min-h-0 flex-1">
       <div {...live.panel('chat')} className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${chat}`}>

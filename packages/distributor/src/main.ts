@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readDeploymentFile } from '@quack/sdk';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,7 @@ import { catalogStore, eventsRoute, openCatalog } from '@quack/catalog';
 import { parseDeployment, priceOf } from '@quack/session';
 import { backfillCatalog } from './catalog-sync.ts';
 import { createDistributor } from './server.ts';
+import { openOutbox } from './outbox.ts';
 import { openNotifications } from './notifications.ts';
 import { pinnedAgentPath } from './process-driver.ts';
 import { credentialBroker } from './credentials.ts';
@@ -60,7 +62,7 @@ const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string
   void push.notify(key, events).catch((err) => console.error('push:', err));
 }) };
 const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
-const server = createDistributor(driver, { refuse, sessions, catalog, models, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
+const server = createDistributor(driver, { refuse, sessions, catalog, models, routes, outbox: openOutbox(join(dataDir, 'outbox.sqlite')), proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
 // A failed start (an extension finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
 for (const [name, app] of Object.entries(mounted)) {

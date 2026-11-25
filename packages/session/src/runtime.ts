@@ -52,6 +52,12 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth.
+/** The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue. */
+export async function queuedOf(harness: Harness, root: Conversation) {
+  const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
+  return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]), content: i.content as UserInput }] : []));
+}
+
 export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<ConversationRetryPolicy>; /** How long a run waits out a failing model endpoint; absent keeps MODEL_RETRY's few minutes, as a session with no deployment behind it should. */ outageHours?: number; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
@@ -250,14 +256,10 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       return Boolean(found?.owner && !found.parent);
     },
     transcript: () => transcriptOf(root),
-    // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
     async queued() {
       return (await this.queuedItems()).map(({ id, text }) => ({ id, text }));
     },
-    async queuedItems() {
-      const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
-      return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]), content: i.content as UserInput }] : []));
-    },
+    queuedItems: () => queuedOf(harness, root),
     // Stops the current run; input queued behind it is kept and starts the next run.
     async abort(caller: Caller) {
       const result = await stopRun(root);
