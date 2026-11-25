@@ -6,6 +6,7 @@ import { More } from './More.tsx';
 import { Shell, type Route } from './Shell.tsx';
 import { Settings } from './Settings.tsx';
 import { SessionList } from './SessionList.tsx';
+import { SignInBanner } from './SignInBanner.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { ExtensionProviders } from './slots.tsx';
 import { useDesktop } from './useDesktop.ts';
@@ -68,7 +69,7 @@ export function App() {
   const inSidebar = listInSidebar(desktop, nav, Boolean(session));
   return (
     <ExtensionProviders rows={data.rows}>
-      <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined}>
+      <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined} banner={<SignInBanner />}>
         {full ? <ArtifactPage sessionKey={full.key} kind={full.kind} version={full.version} rows={data.rows} />
           : Page ? <Page rows={data.rows} />
           : nav === 'more' ? <More />

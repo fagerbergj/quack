@@ -1,4 +1,4 @@
-import { listAll, postInvocation, type Approval, type SealedArtifact } from '../../api.ts';
+import { apiFetch, listAll, postInvocation, type Approval, type SealedArtifact } from '../../api.ts';
 import type { Marking, Stand } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
 import type { Mark } from '../../StatusIcon.tsx';
@@ -72,7 +72,7 @@ export async function specNumbers(key: string): Promise<Map<number, number> | un
 }
 
 async function readVersions(key: string) {
-  const res = await fetch(`apps/contracts/contracts/${encodeURIComponent(key)}`).catch(() => undefined);
+  const res = await apiFetch(`apps/contracts/contracts/${encodeURIComponent(key)}`).catch(() => undefined);
   if (!res?.ok) return undefined;
   const body = (await res.json().catch(() => ({}))) as { versions?: Array<{ artifact: number; version: number; status: VersionStatus }> };
   return body.versions && { statuses: new Map(body.versions.map((v) => [v.artifact, v.status])), numbers: new Map(body.versions.map((v) => [v.artifact, v.version])) };

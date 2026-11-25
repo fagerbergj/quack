@@ -90,7 +90,7 @@ const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-
 
 // Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
-export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
+export function Shell({ route, bare, sidebar, banner, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; /** Above the page in the flow, so it pushes the header down rather than covering it. */ banner?: ReactNode; children: ReactNode }) {
   const bar = useBar();
   const tabs = bar.flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
   // The sidebar honours the same picks as the bottom bar; the rest sit under More, as on the More page.
@@ -137,6 +137,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         <VersionLink className="px-5 py-2 font-mono text-[11px] text-muted no-underline hover:text-ink" />
       </aside>
       <div className="fixed inset-x-0 top-0 bottom-[calc(48px+var(--safe-b))] flex flex-col lg:contents">
+      {banner}
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
         <Duck size={30} />
         {route === 'home' ? <span className="wordmark text-xl">quack</span> : route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
+import { navigation } from './auth.ts';
 import { parseArtifactRoute } from './ArtifactPage.tsx';
 import { artifactHref } from './extension.ts';
 import { CHAT_DEFAULT, CHAT_MIN, clampChat, PANE_MIN, useSplit } from './Split.tsx';
@@ -97,15 +98,33 @@ test('the list is read again on every (re)open of the change stream, and a strea
     streamsOf(WATCH)[0]!.open();
     expect(await screen.findByRole('link', { name: /Beta/ })).toBeInTheDocument();
     routes['GET /sessions'] = { sessions: [sess('gh:c', { title: 'Gamma' })] };
+    const reload = vi.mocked(navigation.reload);
     streamsOf(WATCH)[0]!.fail();
     await act(() => vi.advanceTimersByTimeAsync(30_000));
     expect(streamsOf(WATCH)).toHaveLength(2);
+    expect(fetchMock, 'the drop probes the sign-in, which answers').toHaveBeenCalledWith('version', { cache: 'no-store', redirect: 'manual' });
+    expect(reload).not.toHaveBeenCalled();
     expect(screen.queryByRole('link', { name: /Gamma/ }), 'read once the new stream opens, not before').toBeNull();
     streamsOf(WATCH)[1]!.open();
     expect(await screen.findByRole('link', { name: /Gamma/ })).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
+});
+
+test('a dropped change stream whose probe is redirected to another origin sends the page to sign in', async () => {
+  const reload = vi.mocked(navigation.reload);
+  // Signed out, the proxy redirects to its login origin: opaque under manual redirect, a CORS failure when followed.
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url !== 'version') return fetchMock(url, init);
+    if (init?.redirect === 'manual') return { type: 'opaqueredirect', ok: false, status: 0 } as Response;
+    throw new TypeError('Failed to fetch');
+  });
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  streamsOf(WATCH)[0]!.fail();
+  await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
 });
 
 test('sessions past the first page are listed: the pages are followed to the end', async () => {
@@ -599,7 +618,7 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   ws.frame(view({ run: true }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
-  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST', redirect: 'manual' });
   ws.frame(view({}));
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
 });
@@ -1216,7 +1235,7 @@ test('a failed run shows Failed in the header and a card with the step, the firs
   expect(screen.getByRole('status')).toHaveTextContent('Failed · decide');
   routes['POST /sessions/ui%3Au1/resume'] = { submissionId: '2', status: 'placed' };
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
-  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/resume', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/resume', { method: 'POST', redirect: 'manual' });
   ws.frame({ type: 'standing', questions: [], failures: [], approvals: [] });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Failed run' })).toBeNull());
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
@@ -2265,7 +2284,7 @@ test('the composer shows Stop while a run is in progress with an empty input', a
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   ws.frame(view({ run: true }));
   await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST', redirect: 'manual' });
   ws.frame(view({}));
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
@@ -2290,7 +2309,7 @@ test('Stop with a message queued aborts the run and leaves the queue chip', asyn
   const stop = screen.getByRole('button', { name: 'Stop' });
   expect(stop).toHaveAttribute('title', 'Stop this run; queued messages still send');
   await userEvent.click(stop);
-  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST', redirect: 'manual' });
   expect(screen.getByText('turn left')).toBeInTheDocument();
 });
 

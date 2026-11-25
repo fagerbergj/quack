@@ -1,8 +1,40 @@
-import { json } from './api.ts';
+import { apiFetch, json } from './api.ts';
+import { SignInExpired } from './auth.ts';
 
 export type PushState = 'install' | 'unsupported' | 'blocked' | 'off' | 'on';
 
-const post = (path: string, body: unknown) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+/** A push step that failed: `message` is the terse line and `remedy` what to do, both on screen; `detail` adds which step and why. */
+export class PushError extends Error {
+  readonly remedy: string;
+  readonly detail: string;
+  constructor(message: string, cause: string, remedy: string) {
+    super(message);
+    this.remedy = remedy;
+    this.detail = `${cause} ${remedy}`;
+  }
+}
+
+// Browser messages may end in a period, and the detail adds its own after them.
+const why = (err: unknown) => (typeof (err as Error | null)?.message === 'string' ? (err as Error).message : String(err)).replace(/\.$/, '');
+
+// An expired sign-in passes through untouched: apiFetch has already sent the page to sign in.
+async function request<T>(verb: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  const res = await apiFetch(path, init).catch((err: unknown) => {
+    throw err instanceof SignInExpired ? err : new PushError("Can't reach quack", `Could not ${verb}: ${why(err)}.`, 'Check the connection, then try again.');
+  });
+  return json<T>(res).catch((err: unknown) => {
+    throw new PushError('quack refused', `Could not ${verb}: ${why(err)}.`, 'Try again later.');
+  });
+}
+
+async function guard<T>(message: string, verb: string, remedy: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    throw new PushError(message, `Could not ${verb}: ${why(err)}.`, remedy);
+  }
+}
 
 // iPadOS reports a Mac, so touch points tell them apart.
 const onIos = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -24,22 +56,24 @@ const keyBytes = (b64url: string) => Uint8Array.from(atob(b64url.replace(/-/g, '
 
 export async function enablePush(): Promise<PushState> {
   if ((await Notification.requestPermission()) !== 'granted') return pushState();
-  const { publicKey } = await json<{ publicKey: string }>(await fetch('push/key'));
-  const sub = await (await registration()).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
-  await json(await post('push/subscribe', { subscription: sub.toJSON() }));
+  const { publicKey } = await request<{ publicKey: string }>('get the push key', 'push/key');
+  const reg = await guard('Worker failed', 'start the notification worker', 'Reload, then try again.', registration);
+  const sub = await guard('Push service refused', "subscribe with the browser's push service", 'Check that this browser allows push messages, then try again.', () => reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
+  await request('save this device', 'push/subscribe', { subscription: sub.toJSON() });
   return 'on';
 }
 
 export async function disablePush(): Promise<PushState> {
   const sub = await current();
   if (sub) {
-    await post('push/unsubscribe', { endpoint: sub.endpoint });
+    // The browser is the authority, so it unsubscribes first; a row the server keeps is dropped when the push service answers 410.
     await sub.unsubscribe();
+    await request('remove this device', 'push/unsubscribe', { endpoint: sub.endpoint }).catch(() => undefined);
   }
   return 'off';
 }
 
 export async function testPush(): Promise<void> {
   const sub = await current();
-  if (sub) await json(await post('push/test', { endpoint: sub.endpoint }));
+  if (sub) await request('send a test', 'push/test', { endpoint: sub.endpoint });
 }

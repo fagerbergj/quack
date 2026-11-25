@@ -1,5 +1,7 @@
 // Every call to the distributor, so its contract lives in one place.
 import { escapeTerm } from '@quack/sdk/query';
+import { apiFetch, probeSignIn } from './auth.ts';
+export { apiFetch, probeSignIn };
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
 /** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
 export type Spend = { cost: number; tokens: Tokens };
@@ -52,7 +54,7 @@ export async function listAll<T>(path: string, field: string, q?: string, orderB
   const rows: T[] = [];
   for (let token = ''; ;) {
     const query = new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(orderBy && { orderBy }), ...(token && { pageToken: token }) });
-    const page = await json<Record<string, T[] | undefined> & { nextPageToken?: string }>(await fetch(`${path}?${query}`));
+    const page = await json<Record<string, T[] | undefined> & { nextPageToken?: string }>(await apiFetch(`${path}?${query}`));
     rows.push(...(page[field] ?? []));
     if (!page.nextPageToken) return rows;
     token = page.nextPageToken;
@@ -60,10 +62,10 @@ export async function listAll<T>(path: string, field: string, q?: string, orderB
 }
 // A page token only fits the order it was issued under, so every page of one list carries the same orderBy.
 export const listSessions = (q?: string) => listAll<Session>('sessions', 'sessions', q, 'lastActivity');
-export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
-export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await fetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
+export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await apiFetch('agents'))).agents;
+export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await apiFetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
 export const promoteAgent = async (name: string, version: number) =>
-  void (await json(await fetch(`agents/${encodeURIComponent(name)}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version }) })));
+  void (await json(await apiFetch(`agents/${encodeURIComponent(name)}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version }) })));
 // Verdicts sealed before checks carried a label have none; their id reads well enough.
 const named = (a: SealedArtifact): SealedArtifact =>
   a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
@@ -75,7 +77,7 @@ export const listArtifacts = async (key: string): Promise<SealedArtifact[]> =>
 /** One sealed version's content, from the Sessions API; the socket carries it for a kind's newest version only. */
 export async function versionContent(key: string, kind: string, version: number): Promise<string> {
   const q = new URLSearchParams({ q: `kind:${escapeTerm(kind)} AND version:${version}`, pageSize: '1' });
-  const a = (await json<{ artifacts?: Artifact[] }>(await fetch(`${base(key)}/artifacts?${q}`))).artifacts?.[0];
+  const a = (await json<{ artifacts?: Artifact[] }>(await apiFetch(`${base(key)}/artifacts?${q}`))).artifacts?.[0];
   if (a?.content === undefined) throw new Error('That version is no longer in its session.');
   return a.content;
 }
@@ -88,31 +90,31 @@ export const listAllArtifacts = (q?: string) => listAll<Artifact>('artifacts', '
 export const sealedFrom = (artifacts: SealedArtifact[]) => artifacts.map(named);
 /** A subagent conversation's first 50 messages, as the session records them. */
 export const conversationMessages = async (key: string, conversation: string) =>
-  (await json<{ messages: Array<{ role: 'user' | 'assistant'; text: string }> }>(await fetch(`${base(key)}/messages?conversation=${encodeURIComponent(conversation)}&limit=50`))).messages;
+  (await json<{ messages: Array<{ role: 'user' | 'assistant'; text: string }> }>(await apiFetch(`${base(key)}/messages?conversation=${encodeURIComponent(conversation)}&limit=50`))).messages;
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
-export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
+export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await apiFetch(`${base(key)}/meta`))).meta;
 const housekeep = async (path: string, method: string, body: object) =>
-  void (await json(await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
+  void (await json(await apiFetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
 export const renameSession = (key: string, title: string) => housekeep(base(key), 'PATCH', { title });
 // Unarchiving returns the session to stopped; the server refuses to archive a running one.
 export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { state: archived ? 'archived' : 'stopped' });
-export const deleteSession = async (key: string) => void (await json(await fetch(base(key), { method: 'DELETE' })));
+export const deleteSession = async (key: string) => void (await json(await apiFetch(base(key), { method: 'DELETE' })));
 
 /** A model a session may run: `name` is provider/model. */
 export type ModelInfo = { name: string; contextWindow?: number; images?: boolean; reasoning?: boolean };
 /** The available models, and `defaultModel`, what a session runs when neither it nor its agent names one. */
-export const listModels = async () => json<{ models: ModelInfo[]; defaultModel?: string }>(await fetch('models'));
+export const listModels = async () => json<{ models: ModelInfo[]; defaultModel?: string }>(await apiFetch('models'));
 /** The session's own pick (`model`, absent when it has none) and the model its next run resolves to, the agent's own included. */
 export type SessionModel = { model?: string; resolvedModel?: string };
-export const getSessionModel = async (key: string) => json<SessionModel>(await fetch(base(key)));
+export const getSessionModel = async (key: string) => json<SessionModel>(await apiFetch(base(key)));
 export const setSessionModel = async (key: string, model: string | null) =>
-  json<SessionModel>(await fetch(base(key), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) }));
-export const getSettings = async () => json<{ defaultModel?: string }>(await fetch('settings'));
+  json<SessionModel>(await apiFetch(base(key), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) }));
+export const getSettings = async () => json<{ defaultModel?: string }>(await apiFetch('settings'));
 export const setDefaultModel = (model: string | null) => housekeep('settings', 'PATCH', { defaultModel: model });
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
 export const exportUrl = (key: string) => `${base(key)}/export`;
-export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
-export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
+export const abortRun = async (key: string) => void (await json(await apiFetch(`${base(key)}/abort`, { method: 'POST' })));
+export const resumeRun = async (key: string) => void (await json(await apiFetch(`${base(key)}/resume`, { method: 'POST' })));
 
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
 export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null; freeText?: boolean };
@@ -131,7 +133,7 @@ export const questionOf = (a: Ask): Question => ({ question: '', options: [], ..
 /** A question's choice is an option's label, or the free text itself; an approval's is approve or reject. */
 export type Resolution = { choice: string; text?: string; reason?: string };
 const resolveAsk = (key: string, id: string, resolution: Resolution) =>
-  fetch(`${base(key)}/asks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
+  apiFetch(`${base(key)}/asks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
 export const answerQuestion = async (key: string, id: string, resolution: Resolution) => void (await json(await resolveAsk(key, id, resolution)));
 
 const STEERED = "the request was withdrawn: a person's message reached the run while it waited";
@@ -153,7 +155,7 @@ export async function decideApproval(key: string, id: string, decision: 'approve
 
 // The distributor refuses a socket for a key it does not know, so a conversation's first message goes through invocations, which create it.
 export const postInvocation = async (key: string, agent: string, body: Record<string, unknown>) =>
-  void (await json(await fetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify(body) })));
+  void (await json(await apiFetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify(body) })));
 export const startSession = (key: string, agent: string, input: string) =>
   postInvocation(key, agent, { input, requestId: `ui-start:${Date.now()}` });
 
@@ -166,5 +168,5 @@ export function socketUrl(key: string, agent?: string) {
 export type Version = { commit: string | null; builtAt: string | null };
 let version: Promise<Version | null> | undefined;
 // One request per page load; a failure resolves to null so the UI shows nothing.
-export const getVersion = () => (version ??= fetch('version').then((r) => json<Version>(r)).catch(() => null));
+export const getVersion = () => (version ??= apiFetch('version').then((r) => json<Version>(r)).catch(() => null));
 export const forgetVersion = () => { version = undefined; };

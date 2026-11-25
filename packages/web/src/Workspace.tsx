@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { listSessions, type Version } from './api.ts';
+import { listSessions, probeSignIn, type Version } from './api.ts';
 import { Home } from './Home.tsx';
 import { sessionTitle } from './kinds.ts';
 import { multiScope, rowOf, type Row } from './sessions.ts';
@@ -49,7 +49,7 @@ export function useWorkspaceData() {
       es.onopen = () => void refresh();
       es.addEventListener('changed', () => void refresh());
       es.addEventListener('hello', (m) => setServed(JSON.parse(m.data) as Version));
-      es.onerror = () => { if (es?.readyState === EventSource.CLOSED) retry = setTimeout(open, REOPEN_MS); };
+      es.onerror = () => { if (es?.readyState === EventSource.CLOSED) (void probeSignIn(), (retry = setTimeout(open, REOPEN_MS))); };
     };
     reload.current = () => void refresh();
     void refresh();
