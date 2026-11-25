@@ -141,6 +141,8 @@ const splitRef = (ref: string) => [ref.slice(0, ref.indexOf('/')), ref.slice(ref
 
 /** The context window a model whose provider states none runs with: small, so compaction starts early on any real window, and an overflow compacts too. */
 const UNKNOWN_CONTEXT_WINDOW = 32_768;
+// A quarter of that window, so a completion's budget leaves room for the prompt on a window smaller than the guess.
+const UNKNOWN_MAX_TOKENS = 8_192;
 
 // The context field names llama.cpp (`meta.n_ctx`), OpenRouter and llama-swap (`context_length`) and vLLM (`max_model_len`) list.
 const statedContext = (m: Record<string, unknown>) => [isObject(m.meta) ? m.meta.n_ctx : undefined, m.context_length, m.max_model_len].find(positive) as number | undefined;
@@ -426,9 +428,9 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
       models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
       continue;
     }
-    // Without a hand-written maxTokens the model's context window caps a completion.
+    // Without a hand-written maxTokens the context window caps a completion; pi-ai clamps max_tokens to the window less the prompt (clampMaxTokensToContext).
     const list = entries.map(([m, l]) => ({
-      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow ?? UNKNOWN_CONTEXT_WINDOW, maxTokens: l.maxTokens ?? l.contextWindow ?? UNKNOWN_CONTEXT_WINDOW,
+      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow ?? UNKNOWN_CONTEXT_WINDOW, maxTokens: l.maxTokens ?? l.contextWindow ?? UNKNOWN_MAX_TOKENS,
     }));
     models.setProvider(retryEngineBusy(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, api: openAICompletionsApi() })));
   }

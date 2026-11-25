@@ -41,6 +41,24 @@ test('the model list is what each provider\'s /models states plus the hand-writt
   warn.mock.restore();
 });
 
+test('a round in which a provider could not list is retried after a few seconds, while one that listed is kept for the minute', async () => {
+  let [t, up, calls] = [0, false, 0];
+  const flaky = (async (...args: Parameters<typeof fetch>) => ((calls += 1), up ? listing(...args) : down(...args))) as typeof fetch;
+  const warn = mock.method(console, 'error', () => {});
+  const models = sessionModels({ dataDir: await temp(), deployment, fetch: flaky, now: () => t });
+  const names = async () => (await models.list()).models.map((m) => m.name);
+  assert.deepEqual(await names(), ['local/hand']);
+  up = true;
+  t = 4_999;
+  assert.deepEqual(await names(), ['local/hand'], 'callers within the short backoff share the failed round');
+  t = 5_000;
+  assert.deepEqual(await names(), ['local/hand', 'local/big', 'local/no-ctx']);
+  t = 64_999;
+  await names();
+  assert.equal(calls, 2);
+  warn.mock.restore();
+});
+
 test('the Settings default is checked, persists in the data dir across restarts, and outranks the deployment\'s', async () => {
   const dataDir = await temp();
   const withDefault = parseDeployment({ ...deployment, defaultModel: 'local/hand' });

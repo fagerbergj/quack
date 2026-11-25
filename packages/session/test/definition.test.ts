@@ -330,7 +330,7 @@ test('models merge: discovered ids plus hand-written ones, a hand-written field 
   assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6, 'a hand-written provider capacity is preserved');
   const built = buildModels(resolved);
   assert.deepEqual([built.getModel('local', 'a')?.input, built.getModel('local', 'peer')?.input], [['text', 'image'], ['text']]);
-  assert.deepEqual([built.getModel('local', 'ids-only')?.contextWindow, built.getModel('local', 'ids-only')?.maxTokens], [32_768, 32_768], 'below the 32k background threshold, so it compacts early');
+  assert.deepEqual([built.getModel('local', 'ids-only')?.contextWindow, built.getModel('local', 'ids-only')?.maxTokens], [32_768, 8_192], 'an unknown window is deliberately small so compaction starts early, and a completion takes a quarter of it');
   const d = { name: 'x', version: 1, extensions: {} };
   assert.equal(parseDefinition({ ...d, model: 'local/ids-only' }, resolved, {}).model, 'local/ids-only');
   assert.equal(parseDefinition(d, resolved, {}).model, 'local/a', 'the first available is the first hand-written');
@@ -349,7 +349,7 @@ test('a listed peer form of a hand-written model is that model, and hidden, non-
 });
 
 test('a session runs a model its provider lists but the deployment never wrote, under the id the provider listed', async () => {
-  const bodies: Array<{ model?: string }> = [];
+  const bodies: Array<{ model?: string; max_tokens?: number; max_completion_tokens?: number }> = [];
   const server = createServer((req, res) => {
     if (req.method === 'GET') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: [{ id: 'qwen' }, { id: 'peer/deepseek', meta: { llamaswap: { peerID: 'peer', type: 'peer' } } }] }));
     let body = '';
@@ -367,6 +367,7 @@ test('a session runs a model its provider lists but the deployment never wrote, 
     const models = buildModels(resolved);
     await models.completeSimple(models.getModel(spec.model.provider, spec.model.modelId)!, { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] });
     assert.equal(bodies[0]?.model, 'peer/deepseek');
+    assert.equal(bodies[0]?.max_completion_tokens ?? bodies[0]?.max_tokens, 8_192, 'a quarter of the guessed window, not all of it');
   } finally {
     server.close();
   }

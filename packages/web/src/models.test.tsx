@@ -27,23 +27,46 @@ test('the composer shows the model the session runs by its short name, and a pic
   await waitFor(() => expect(picker).toHaveValue('local/flash'));
   expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual(['flash', 'big', 'deepseek']);
   expect(picker).toHaveDisplayValue('flash');
-  expect(picker).toHaveAccessibleDescription('Model for the next run: local/flash, 256k context');
+  expect(picker).toHaveAccessibleDescription('Model for the next run: local/flash, 256k context, from Settings');
   expect(picker.parentElement).not.toBe(screen.getByRole('textbox', { name: 'Message' }).parentElement);
-  expect(document.body).not.toHaveTextContent(/default/i);
+  expect(picker.parentElement).not.toHaveTextContent(/default/i);
+  expect([picker.title, ...within(picker).getAllByRole('option').map((o) => o.title)].join()).not.toMatch(/default/i);
   await userEvent.selectOptions(picker, 'local/peer/deepseek');
   await waitFor(() => expect(picker).toHaveValue('local/peer/deepseek'));
   expect(patches('sessions/ui%3Au1')).toEqual([{ model: 'local/peer/deepseek' }]);
-  expect(picker).toHaveAccessibleDescription('Model for the next run: local/peer/deepseek, unknown context');
+  expect(picker).toHaveAccessibleDescription('Model for the next run: local/peer/deepseek, unknown context, this session\'s pick');
+});
+
+test('choosing the Settings model clears the session\'s pick, so the session follows Settings again', async () => {
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big', resolvedModel: 'local/big' };
+  routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/flash' };
+  openSession();
+  const picker = await screen.findByRole('combobox', { name: 'Model:' });
+  await waitFor(() => expect(picker).toHaveAccessibleDescription('Model for the next run: local/big, 128k context, this session\'s pick'));
+  expect(within(picker).getByRole('option', { name: 'flash' })).toHaveAttribute('title', 'Settings model; choosing it follows Settings again');
+  expect(within(picker).getByRole('option', { name: 'big' })).not.toHaveAttribute('title');
+  await userEvent.selectOptions(picker, 'local/flash');
+  await waitFor(() => expect(picker).toHaveAccessibleDescription('Model for the next run: local/flash, 256k context, from Settings'));
+  expect(patches('sessions/ui%3Au1')).toEqual([{ model: null }]);
+});
+
+test('a resolved model the list no longer offers is still the one shown, first in the list', async () => {
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/gone' };
+  openSession();
+  const picker = await screen.findByRole('combobox', { name: 'Model:' });
+  await waitFor(() => expect(picker).toHaveValue('local/gone'));
+  expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual(['gone', 'flash', 'big', 'deepseek']);
+  expect(picker).toHaveAccessibleDescription('Model for the next run: local/gone, unknown context, from its agent');
 });
 
 test('the composer shows the session\'s own pick, and a refused pick keeps it and says why', async () => {
   routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big', resolvedModel: 'local/big' };
-  routes['PATCH /sessions/ui%3Au1'] = new Fail(400, { detail: 'model local/flash is not available; available: local/big' });
+  routes['PATCH /sessions/ui%3Au1'] = new Fail(400, { detail: 'model local/peer/deepseek is not available; available: local/big' });
   openSession();
   const picker = await screen.findByRole('combobox', { name: 'Model:' });
   await waitFor(() => expect(picker).toHaveValue('local/big'));
-  await userEvent.selectOptions(picker, 'local/flash');
-  await waitFor(() => expect(picker).toHaveAccessibleDescription('model local/flash is not available; available: local/big'));
+  await userEvent.selectOptions(picker, 'local/peer/deepseek');
+  await waitFor(() => expect(picker).toHaveAccessibleDescription('model local/peer/deepseek is not available; available: local/big'));
   expect(picker).toHaveValue('local/big');
   expect(picker).toHaveAttribute('aria-invalid', 'true');
 });
@@ -52,7 +75,7 @@ test('a session without a pick whose agent names a model is described as running
   routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/big' };
   openSession();
   const picker = await screen.findByRole('combobox', { name: 'Model:' });
-  await waitFor(() => expect(picker).toHaveAccessibleDescription('Model for the next run: local/big, 128k context'));
+  await waitFor(() => expect(picker).toHaveAccessibleDescription('Model for the next run: local/big, 128k context, from its agent'));
   expect(picker).toHaveDisplayValue('big');
 });
 
