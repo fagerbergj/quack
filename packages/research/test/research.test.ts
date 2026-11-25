@@ -438,7 +438,7 @@ test('each sentence of a finding is a claim, asked of each kept source it cites 
   assert.deepEqual(ev.source[0].shared, { finding: '- Kestrel operates 38 electric buses. All are the Vantor E12. [s1][s2]' }, 'a finding of several sentences is shared, so its items pack');
   assert.equal(ev.source[4].shared, undefined, 'a one-sentence finding goes alone');
   assert.deepEqual(Object.keys(ev), ['sources', 'source']);
-  assert.deepEqual([researchRubric.version, researchRubric.threshold], [13, 0.8]);
+  assert.deepEqual([researchRubric.version, researchRubric.threshold], [14, 0.8]);
   assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1]]);
   assert.equal(reportDeclaration.checks.supported_by_source.decisionModel, undefined, 'the decision model settles each item first');
 });
