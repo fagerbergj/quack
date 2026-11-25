@@ -16,6 +16,10 @@ function labels(models: ModelInfo[]) {
 // The picker sits in the composer's form, where Enter on a focused control would send the draft.
 const keepDraft = (e: KeyboardEvent) => void (e.key === 'Enter' && e.preventDefault());
 
+const selectClass = (narrow: boolean, error: boolean) => narrow
+  ? 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default'
+  : `focus-ring h-9 max-w-[8.5rem] min-w-0 flex-none cursor-pointer truncate rounded-full border-0 bg-transparent px-2 text-[13px] hover:bg-line/40 disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : 'text-muted'}`;
+const name = (now: SessionModel) => `Model: ${now.model ?? `Default (${now.resolvedModel ?? 'none'})`}`;
 const WRAP = 'relative grid h-11 w-11 flex-none place-items-center rounded-full text-ink-2 hover:text-ink has-focus-visible:ring-2 has-focus-visible:ring-accent';
 
 // The phone form: a chip icon the size of the attach button, dotted when the session has its own pick.
@@ -44,7 +48,6 @@ export function ModelPicker({ sessionKey }: { sessionKey: string }) {
     setSaving(true);
     setSessionModel(sessionKey, next || null).then(setSaved, (e: Error) => setError(e.message)).finally(() => setSaving(false));
   };
-  const pick = now.model ? runs : `Default (${runs ?? 'none'})`;
   const tip = error || detail;
   return (
     <>
@@ -53,8 +56,8 @@ export function ModelPicker({ sessionKey }: { sessionKey: string }) {
       <span className={narrow ? WRAP : 'contents'} title={narrow ? tip : undefined}>
         {narrow && <Chip picked={!!now.model} />}
         <select id="model-pick" value={now.model ?? ''} disabled={saving} aria-busy={saving || undefined} onChange={(e) => change(e.target.value)} onKeyDown={keepDraft}
-          title={tip} aria-label={narrow ? `Model: ${pick}` : undefined} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
-          className={narrow ? 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default' : `focus-ring h-9 max-w-[8.5rem] min-w-0 flex-none cursor-pointer truncate rounded-full border-0 bg-transparent px-2 text-[13px] hover:bg-line/40 disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : 'text-muted'}`}>
+          title={tip} aria-label={narrow ? name(now) : undefined} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
+          className={selectClass(narrow, !!error)}>
           <option value="">Default</option>
           {list.models.map((m) => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
         </select>
