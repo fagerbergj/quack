@@ -61,6 +61,13 @@ test('a failed last run reads its step until a new run works on it; pending asks
   expect(look(row('remarkable:d1', { pendingAsks: 1 })).line).toBe('Waiting on you');
 });
 
+test('a failure older than the newest activity or ask gives way to waiting; one that is the latest stays red', () => {
+  const failed = { lastRun: { outcome: 'failed' as const, endedAt: '2026-11-23T01:56:29Z', failedSteps: [{ step: 'model', error: 'the engine stopped' }] } };
+  const asked = row('contracts:c1', { ...failed, lastActivity: '2026-11-25T04:01:24Z', pendingAsks: 1, oldestAskAt: '2026-11-25T04:05:14Z' });
+  expect(look(asked)).toMatchObject({ line: 'Waiting on you', tone: 'warn' });
+  expect(look(row('contracts:c1', { ...failed, lastActivity: '2026-11-23T01:56:29Z', pendingAsks: 1, oldestAskAt: '2026-11-23T01:50:00Z' })).tone).toBe('bad');
+});
+
 test('a Home conversation reads Chat or Working, never the agent name', () => {
   expect(look(row('home:main', { agent: 'quack', ...ended('succeeded') })).line).toBe('Chat');
   expect(look(row('home:main', { agent: 'quack', state: 'running' })).line).toBe('Working');

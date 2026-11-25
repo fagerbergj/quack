@@ -118,6 +118,22 @@ test('v10 turn.ended: a session mid-run with two ended turns shows lastActivity 
   assert.equal((await catalog.getSession(key))?.lastActivity, Date.parse(at(40)), 'a redelivered turn.ended neither applies twice nor regresses');
 });
 
+test('a new run clears the last run\'s failure while it waits on an approval, and its own end replaces it', async () => {
+  const { post, catalog } = await channel();
+  const key = 'sleeper:platinum:2';
+  const run = (seq: number, n: number) => ({ seq, id: `run:${n}:started`, at: at(seq), type: 'run.started', data: { run: n } });
+  const end = (seq: number, n: number, outcome: string, failedSteps: unknown[] = []) => ({ seq, id: `run:${n}:ended`, at: at(seq), type: 'run.ended', data: { run: n, outcome, failedSteps } });
+  const stopped = (seq: number) => ({ seq, id: `state:${seq}`, at: at(seq), type: 'state.changed', data: { state: 'idle' } });
+  await post({ events: [created(), run(2, 1), end(3, 1, 'failed', [{ step: 'model', error: 'the engine stopped' }]), stopped(4)] });
+  assert.equal((await catalog.getSession(key))?.lastRun?.outcome, 'failed');
+  const approval = { seq: 6, id: 'ask:open:a1', at: at(6), type: 'ask.opened', data: { id: 'a1', type: 'approval', createdAt: at(6), toolCall: { tool: 'push', args: {} } } };
+  await post({ events: [run(5, 2), approval] });
+  const waiting = await catalog.getSession(key);
+  assert.deepEqual([waiting?.pendingAsks, waiting?.lastRun], [1, undefined], 'the open run, not the failed one, is the latest');
+  await post({ events: [end(7, 2, 'succeeded')] });
+  assert.equal((await catalog.getSession(key))?.lastRun?.outcome, 'succeeded');
+});
+
 test('the applied hook runs before the ack, so a crash between them redelivers the batch to it; its failure still acks', async () => {
   const replied: boolean[] = [];
   const { post } = await channel(undefined, async (res) => { replied.push(res.writableEnded); throw new Error('listener down'); });

@@ -154,7 +154,11 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
     },
 
     transitionSession(w: Write, { key, to }: { key: string; to: SessionState }) {
-      return onWrite(key, w, { applied: false } as { applied: boolean; state?: SessionState }, (sql, row, repeat) => move(sql, row, to, repeat));
+      return onWrite(key, w, { applied: false } as { applied: boolean; state?: SessionState }, async (sql, row, repeat) => {
+        // A run going (started or resumed) is newer than the last one's end, which may wait days on an approval before its own.
+        if (to === 'running') await sql.run('update catalog_sessions set last_outcome = null, last_ended_at = null, failed_steps = null where key = ?', [key]);
+        return move(sql, row, to, repeat);
+      });
     },
 
     setTitle(w, { key, title }) {
