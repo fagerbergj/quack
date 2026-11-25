@@ -32,16 +32,18 @@ export function ModelPicker({ sessionKey }: { sessionKey: string }) {
     setSaving(true);
     setSessionModel(sessionKey, next || null).then(setSaved, (e: Error) => setError(e.message)).finally(() => setSaving(false));
   };
+  const tip = error || detail;
   return (
-    <>
-      <label htmlFor="model-pick" className="sr-only">Model</label>
-      <span id="model-pick-detail" className="sr-only">{error || detail}</span>
+    <div className="flex items-center gap-1 px-3 text-[11px] leading-4 text-muted">
+      <label htmlFor="model-pick">Model:</label>
+      <span id="model-pick-detail" className="sr-only">{tip}</span>
       <select id="model-pick" value={now.model ?? ''} disabled={saving} aria-busy={saving || undefined} onChange={(e) => change(e.target.value)} onKeyDown={keepDraft}
-        title={error || detail} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
-        className={`focus-ring h-9 max-w-[8.5rem] min-w-0 flex-none cursor-pointer truncate rounded-full border-0 bg-transparent px-2 text-[13px] hover:bg-line/40 disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : 'text-muted'}`}>
+        title={tip} aria-describedby="model-pick-detail" aria-invalid={error ? true : undefined}
+        className={`focus-ring min-h-8 max-w-[10rem] min-w-0 cursor-pointer truncate rounded border-0 bg-transparent py-0.5 text-[11px] hover:text-ink disabled:cursor-default disabled:opacity-50 ${error ? 'text-danger' : ''}`}>
         <option value="">Default</option>
         {list.models.map((m) => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
       </select>
-    </>
+      {now.model && <span data-testid="model-picked" aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent-ink" />}
+    </div>
   );
 }
