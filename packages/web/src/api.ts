@@ -114,7 +114,6 @@ export type SessionModel = { model?: string; resolvedModel?: string };
 export const getSessionModel = async (key: string) => json<SessionModel>(await apiFetch(base(key)));
 export const setSessionModel = async (key: string, model: string | null) =>
   json<SessionModel>(await apiFetch(base(key), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) }));
-export const getSettings = async () => json<{ defaultModel?: string }>(await apiFetch('settings'));
 export const setDefaultModel = (model: string | null) => housekeep('settings', 'PATCH', { defaultModel: model });
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
 export const exportUrl = (key: string) => `${base(key)}/export`;

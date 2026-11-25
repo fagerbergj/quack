@@ -32,10 +32,14 @@ function answer(res: ServerResponse, stream: boolean, reply: FakeReply) {
   res.end('data: [DONE]\n\n');
 }
 
+// What `GET /models` lists, as llama-swap lists its own and a peer's models: a peer form of a written model, one only listed, Clef and an embedding model.
+const LISTED = [FAKE_MODEL, 'clef', 'peer/qwen3.8-27b', 'peer/deepseek-v4.1-flash', 'peer/qwen3-embed'];
+
 /** An OpenAI-compatible endpoint that answers every chat request with `reply` (or what `reply` picks), so seeded sessions need no real model. */
 export function fakeModel(reply: string | FakeScript): Promise<{ server: Server; url: string }> {
   const script: FakeScript = typeof reply === 'string' ? () => ({ content: reply }) : reply;
   const server = createServer((req, res) => {
+    if (req.method === 'GET' && req.url?.endsWith('/models')) return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: LISTED.map((id) => ({ id })) }));
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {

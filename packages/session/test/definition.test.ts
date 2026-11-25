@@ -323,16 +323,53 @@ test('an old file with a services section is rejected, naming the key and its re
 const listing = (data: unknown[], ok = true) => (async () => ({ ok, json: async () => ({ data }) })) as unknown as typeof fetch;
 const thin = { defaultModel: 'local/a', providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 } } } } };
 
-test('models merge: discovered ids plus hand-written ones, a hand-written field wins, a model without contextWindow is listed but not selectable', async () => {
-  const fetched = listing([{ id: 'a', meta: { n_ctx: 8192 }, architecture: { input_modalities: ['text', 'image'] } }, { id: 'ids-only' }]);
+test('models merge: discovered ids plus hand-written ones, a hand-written field wins, a model whose context nobody states runs with a small window', async () => {
+  const fetched = listing([{ id: 'a', meta: { n_ctx: 8192 }, architecture: { input_modalities: ['text', 'image'] } }, { id: 'ids-only' }, { id: 'routed', context_length: 65536 }, { id: 'vllm', max_model_len: 4000 }]);
   const resolved = await resolveDeployment(parseDeployment({ ...thin, providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 }, peer: { contextWindow: 1000, images: false } } } } }), fetched);
-  assert.deepEqual(resolved.providers.local.models, { a: { contextWindow: 4096, images: true }, 'ids-only': {}, peer: { contextWindow: 1000, images: false } });
+  assert.deepEqual(resolved.providers.local.models, { a: { contextWindow: 4096, images: true }, peer: { contextWindow: 1000, images: false }, 'ids-only': {}, routed: { contextWindow: 65536 }, vllm: { contextWindow: 4000 } });
   assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6, 'a hand-written provider capacity is preserved');
   const built = buildModels(resolved);
-  assert.deepEqual([built.getModel('local', 'a')?.input, built.getModel('local', 'peer')?.input, built.getModel('local', 'ids-only')], [['text', 'image'], ['text'], undefined]);
+  assert.deepEqual([built.getModel('local', 'a')?.input, built.getModel('local', 'peer')?.input], [['text', 'image'], ['text']]);
+  assert.deepEqual([built.getModel('local', 'ids-only')?.contextWindow, built.getModel('local', 'ids-only')?.maxTokens], [32_768, 32_768], 'below the 32k background threshold, so it compacts early');
   const d = { name: 'x', version: 1, extensions: {} };
-  assert.throws(() => parseDefinition({ ...d, model: 'local/ids-only' }, resolved, {}), /ids-only has no contextWindow/);
-  assert.equal(parseDefinition(d, resolved, {}).model, 'local/a');
+  assert.equal(parseDefinition({ ...d, model: 'local/ids-only' }, resolved, {}).model, 'local/ids-only');
+  assert.equal(parseDefinition(d, resolved, {}).model, 'local/a', 'the first available is the first hand-written');
+});
+
+test('a listed peer form of a hand-written model is that model, and hidden, non-chat and other providers\' ids are not offered', async () => {
+  const fetched = listing([
+    { id: 'clef' }, { id: 'peer/qwen', architecture: { input_modalities: ['text', 'image'] } }, { id: 'peer/deepseek' }, { id: 'peer/qwen3-embed' },
+    { id: 'bge', architecture: { output_modalities: ['embeddings'] } }, { id: 'omni', architecture: { output_modalities: ['text', 'audio'] } },
+  ]);
+  const config = parseDeployment({ providers: { local: { baseUrl: 'http://x/v1', hide: ['qwen3-embed'], models: { qwen: { contextWindow: 4096 } } }, clef: { baseUrl: 'http://x/upstream/clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } } } });
+  const resolved = await resolveDeployment(config, fetched);
+  assert.deepEqual(availableModels(resolved).map((m) => m.name), ['local/qwen', 'local/peer/deepseek', 'local/omni']);
+  assert.deepEqual(resolved.providers.local.models?.qwen, { contextWindow: 4096, images: true }, 'the peer form\'s stated limits merge under the hand-written ones');
+  assert.throws(() => parseDeployment({ providers: { local: { baseUrl: 'http://x/v1', hide: 'qwen3-embed' } } }), /providers\.local\.hide must be a list of model ids/);
+});
+
+test('a session runs a model its provider lists but the deployment never wrote, under the id the provider listed', async () => {
+  const bodies: Array<{ model?: string }> = [];
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: [{ id: 'qwen' }, { id: 'peer/deepseek', meta: { llamaswap: { peerID: 'peer', type: 'peer' } } }] }));
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => (bodies.push(JSON.parse(body)), res.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n')));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    process.env.QUACK_DISCOVERED_TEST_KEY = 'k';
+    const resolved = await resolveDeployment(parseDeployment({ providers: { local: { baseUrl, apiKeyEnv: 'QUACK_DISCOVERED_TEST_KEY', models: { qwen: { contextWindow: 4096 } } } } }));
+    const def = parseDefinition({ name: 'x', version: 1, extensions: {} }, resolved, {}, undefined, { session: 'local/peer/deepseek' });
+    const spec = await agentSpec(def, {});
+    assert.deepEqual(spec.model, { provider: 'local', modelId: 'peer/deepseek' });
+    const models = buildModels(resolved);
+    await models.completeSimple(models.getModel(spec.model.provider, spec.model.modelId)!, { messages: [{ role: 'user', content: 'hi', timestamp: 0 }] });
+    assert.equal(bodies[0]?.model, 'peer/deepseek');
+  } finally {
+    server.close();
+  }
 });
 
 test('an endpoint that is missing or down leaves the hand-written models as the whole list', async () => {
@@ -364,9 +401,9 @@ test('a session start asks only the providers its agent names, so a provider tha
   assert.equal(parseDefinition({ name: 'y', version: 1, model: 'hosted/big', extensions: {} }, await resolveDeployment(parseDeployment({ ...config, defaultModel: 'spare/none' }), listing([]), ['hosted']), {}).model, 'hosted/big', 'a default the agent does not use is not checked');
 });
 
-test('defaultModel must resolve to a selectable model', async () => {
+test('defaultModel must resolve to a model a provider lists or the deployment writes', async () => {
   const bad = (defaultModel: string) => resolveDeployment(parseDeployment({ ...thin, defaultModel }), listing([{ id: 'ids-only' }]));
-  await assert.rejects(bad('local/ids-only'), /defaultModel: .*no contextWindow/);
+  assert.equal((await bad('local/ids-only')).defaultModel, 'local/ids-only');
   await assert.rejects(bad('local/nope'), /defaultModel: model local\/nope is not configured/);
   await assert.rejects(bad('nope/a'), /not configured/);
 });
@@ -394,9 +431,9 @@ test('the same old-shaped content still loads as a pinned snapshot, which parseD
 
 const two = { providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 }, b: { contextWindow: 8192 } } }, clef: { baseUrl: 'http://clef/v1', api: 'systemone' as const, models: { clef: { contextWindow: 8192 } } } } };
 
-test('the available models are the selectable discovered and hand-written ones, decision models left out', async () => {
+test('the available models are the hand-written and then the discovered ones, decision models left out', async () => {
   const resolved = await resolveDeployment(parseDeployment(two), listing([{ id: 'c', meta: { n_ctx: 2048 } }, { id: 'ids-only' }]));
-  assert.deepEqual(availableModels(resolved).map((m) => m.name), ['local/c', 'local/a', 'local/b']);
+  assert.deepEqual(availableModels(resolved).map((m) => m.name), ['local/a', 'local/b', 'local/c', 'local/ids-only']);
   const warn = mock.method(console, 'error', () => {});
   const down = (async () => { throw new Error('refused'); }) as unknown as typeof fetch;
   assert.deepEqual(availableModels(await resolveDeployment(parseDeployment(two), down)).map((m) => m.name), ['local/a', 'local/b'], 'a provider that cannot list offers its hand-written models');

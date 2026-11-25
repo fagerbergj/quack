@@ -13,7 +13,7 @@ const SETTINGS_FILE = 'settings.json';
 // Long enough that a page of pickers and a burst of writes share one round of provider calls, short enough that a model swap shows within a minute.
 const DISCOVERY_TTL_MS = 60_000;
 
-/** One model a session may run, as provider/model with the limits its provider states or the deployment writes. */
+/** One model a session may run, as provider/model with the limits its provider states or the deployment writes; no `contextWindow` when neither states one. */
 export type ModelInfo = { name: string; contextWindow?: number; images?: boolean; reasoning?: boolean };
 
 export type SessionModels = ReturnType<typeof sessionModels>;
@@ -47,7 +47,7 @@ export function sessionModels(opts: { dataDir: string; deployment: DeploymentCon
     async list(): Promise<{ models: ModelInfo[]; defaultModel?: string }> {
       const resolved = await discovered();
       const fallback = resolveModel(undefined, resolved, { default: (await settings()).defaultModel });
-      const models = availableModels(resolved).map(({ name, contextWindow, images, reasoning }) => ({ name, contextWindow, ...(images && { images }), ...(reasoning && { reasoning }) }));
+      const models = availableModels(resolved).map(({ name, contextWindow, images, reasoning }) => ({ name, ...(contextWindow && { contextWindow }), ...(images && { images }), ...(reasoning && { reasoning }) }));
       return { models, ...(typeof fallback === 'string' && { defaultModel: fallback }) };
     },
     /** The model a session's next run resolves to, as the runtime resolves it from the same inputs. */
