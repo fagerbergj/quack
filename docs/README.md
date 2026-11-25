@@ -43,7 +43,7 @@ QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-jud
 `kind` picks the extension's eval adapter: its rubric with its declaration and inputs builder, or, for a rubric not yet declared, its evidence builder.
 
 `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter from the recording as it stood when that version was sealed, through the same builder the live judge uses.
-The builders are `research.report` (fetch log, kept source files, request), `contract.spec` (artifacts, approvals, answered questions, workspace files), and every Sleeper card (the facts step result of the workflow run that sealed it; for an undeclared job, with the news checks dropped when the recorded verdict says the job had no news source, as the live judge drops them).
+The builders are `research.report` (the fetch log and search hits), `contract.spec` (artifacts, approvals, answered questions, workspace files), and every Sleeper card (the facts step result of the workflow run that sealed it; for an undeclared job, with the news checks dropped when the recorded verdict says the job had no news source, as the live judge drops them).
 
 `content` and `evidence` (scope to units), or `inputs` (name to text) for a declared rubric, give them inline for a kind whose adapter cannot rebuild them, such as `github.review`.
 

@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { Ajv2020 } from 'ajv/dist/2020.js';
-import { buildEvidence } from '@quack/judge';
-import { citedIds, findingItems, inputsOf, parseReport, reportDeclaration, summarizeReport, validateReport } from '../src/report.ts';
+import { citedIds, findingItems, parseReport, summarizeReport, validateReport } from '../src/report.ts';
 
 const CONTRACT = { key: 'contracts:e0c7a5bc-36ee-463a-85a9-c296403f5e1e', version: 6 };
 const read = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -68,14 +67,13 @@ test('the stored summary reads the Summary section, a fenced heading inside it i
   assert.equal(summarizeReport(md.replace('## Summary', '## Summary:')), 'Buses', 'no Summary section, so the first heading');
 });
 
-test('a stored report the seal now refuses still reads: its Summary line and no findings', async () => {
+test('a stored report the seal now refuses still reads: its Summary line and no findings', () => {
   const md = read('reports/stored-town-sections.md');
   assert.deepEqual(validateReport(md), [refused('Findings', '## Findings — Eastharbour', '## Findings — Westmere / Lowford', '## Findings — Northgate')]);
   assert.equal(summarizeReport(md), 'Five yards around Eastharbour and Westmere build small wooden boats to order; two take a single dinghy commission.');
   assert.deepEqual(findingItems(md), []);
   assert.deepEqual(citedIds(md), ['s1', 's3', 's2']);
   assert.equal(accepts(parseReport(md)), false, 'its parse lacks the findings section, as the seal says');
-  assert.deepEqual((await buildEvidence(reportDeclaration, inputsOf(md, new Map([['s1', 'x']])))).evidence.source, []);
 });
 
 const F = (body: string) => `## Findings\n${body}`;
