@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { decideApproval, type Approval, type Verdict } from '../../api.ts';
+import { decideApproval, type Approval, type ApprovalChecks, type Verdict } from '../../api.ts';
 import { CheckResult } from '../../CheckResult.tsx';
 import { Inline } from './Info.tsx';
 import { Glyph, Sheet } from './Review.tsx';
@@ -91,7 +91,11 @@ export function useDecide(sessionKey: string, proposal: Approval | undefined, de
     setBusy(decision);
     setError('');
     try {
-      if (await decideApproval(sessionKey, proposal.id, decision, reason)) return (decided(proposal.id), true);
+      if (await decideApproval(sessionKey, proposal.id, decision, reason)) {
+        // A first approve stays shown: the model checks run on it, and a failure brings it back with their findings.
+        if (decision === 'reject' || proposal.checks) decided(proposal.id);
+        return true;
+      }
       setError('This version was already decided, in another tab or by a message you sent. The page shows where it stands now.');
     } catch (e) {
       setError((e as Error).message);
@@ -103,8 +107,9 @@ export function useDecide(sessionKey: string, proposal: Approval | undefined, de
   return { busy, error, decide };
 }
 
-/** What the person decides on: the newest version, its changes against the approved one, and the checker's breaks. */
-export type Pending = { spec: ContractSpec; verdict?: Verdict | null; found?: Break[]; items: Item[]; base?: string; name: string };
+/** What the person decides on: the newest version, its changes against the approved one, the checker's breaks, and `checks`, the
+ * model checks a first approve ran when they failed. */
+export type Pending = { spec: ContractSpec; verdict?: Verdict | null; found?: Break[]; items: Item[]; base?: string; name: string; checks?: ApprovalChecks };
 type Deciding = ReturnType<typeof useDecide> & { onClose: () => void };
 
 const h3 = `m-0 font-sans ${label}`;
@@ -130,13 +135,30 @@ const linesOf = (p: Pending) => (p.items.length
   ? p.items.map((i) => ({ key: i.ptr + i.line, breaking: i.breaking, text: i.line }))
   : (p.spec.changes ?? []).map((c) => ({ key: c.choice, breaking: false, text: lede(c.now) || c.choice })));
 
-/** The confirmation before approving: one line per change, the breaks with their callers, and the judge's checks. */
+const ANYWAY = "Approved over the model checks' findings";
+
+// The model checks a first approve ran and failed, failing items first; a gate that is not the judge's gives its text alone.
+function Findings({ checks }: { checks: ApprovalChecks }) {
+  return (
+    <section className="flex flex-col">
+      <h3 className={h3}>Model checks</h3>
+      {checks.detail ? <CheckResult verdict={checks.detail} open summary="Model checks failed" /> : <p className="m-0 text-[13px] whitespace-pre-line text-danger">{checks.feedback.join('\n')}</p>}
+    </section>
+  );
+}
+
+/** The confirmation before approving: one line per change, the breaks with their callers, and the judge's checks. Once the model checks
+ * failed an approve, their findings lead, and the choice is to send them to the agent or to approve anyway. */
 export function ApproveSheet({ pending, busy, error, decide, onClose }: { pending: Pending } & Deciding) {
-  const { spec, verdict, found, base, name } = pending;
+  const { spec, verdict, found, base, name, checks } = pending;
   const lines = linesOf(pending);
-  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button><button type="button" disabled={!!busy} onClick={() => void decide('approve').then((ok) => ok && onClose())} className={prim}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</button></>;
+  const act = (decision: 'approve' | 'reject', reason?: string) => void decide(decision, reason).then((ok) => ok && onClose());
+  const approve = <button type="button" disabled={!!busy} onClick={() => act('approve', checks && ANYWAY)} className={prim}>{busy === 'approve' ? 'Approving…' : checks ? 'Approve anyway' : `Approve ${name}`}</button>;
+  const send = checks && <button type="button" disabled={!!busy} onClick={() => act('reject', checks.feedback.join('\n'))} title="The agent revises against the findings" className={sec}>{busy === 'reject' ? 'Sending…' : 'Send to the agent'}</button>;
+  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button>{send}{approve}</>;
   return (
     <Sheet title={`Approve ${name}?`} onClose={onClose} actions={actions}>
+      {checks && <Findings checks={checks} />}
       <p className="m-0 text-ink-2">{NOUN[spec.kind][2]} contract, measured against {base ?? 'no approved version'}.</p>
       {lines.length > 0 && <section className="flex flex-col gap-1">
         <h3 className={h3}>{lines.length} {lines.length === 1 ? 'change' : 'changes'}</h3>

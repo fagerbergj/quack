@@ -30,6 +30,8 @@ export type Check = {
   /** Extra points a positive check subtracts per share missed, outside `possible`, for a miss that is also a pitfall. */
   miss?: number;
   code?: (artifact: string, evidence: Evidence) => CodeResult;
+  /** When it runs: at every seal (the default), or only when a person approves the sealed version, through the approval.approving gate. */
+  when?: 'seal' | 'approval';
 };
 
 export type Criterion = { id: string; checks: Check[] };
@@ -63,6 +65,8 @@ export type CheckResult = {
   marks?: string[];
   /** A grouped fold's groups the outer fold ran over; absent for other folds, and when no item applies or the split failed. */
   groups?: number;
+  /** Not run on this verdict: the check runs when a person approves the version, so its met is null and the score leaves it out. */
+  deferred?: 'approval';
 };
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };

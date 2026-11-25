@@ -21,10 +21,14 @@ export type AgentSummary = { name: string; version: number; status: 'draft' | 'p
 export type RubricCheck = { label?: string; weight?: number | 'gate' };
 export type AgentRubric = { criteria: Array<{ id: string; checks: RubricCheck[] }> };
 export type AgentDetail = { name: string; version: number; status: 'draft' | 'promoted'; definition: Record<string, unknown>; prompt: string; rubric?: AgentRubric; versions: Array<{ version: number; status: 'draft' | 'promoted' }> };
-export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
+/** What the approval gates found on a person's approve; `detail` is the judge's verdict when the judge checked it. */
+export type ApprovalChecks = { at: number; passed: boolean; feedback: string[]; detail: Verdict | null };
+/** `approving`: the person's approve is being checked; `checks`: the last approve's checks, which failed, so the next approve is recorded over them. */
+export type Approval = { id: string; tool: string; args: unknown; requestedAt: number; approving?: boolean; checks?: ApprovalChecks };
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; /** A decided yes/no fold sends a boolean; only a number is a share. */ met: boolean | number | null; notes: string[]; scope?: string; /** Items the check ran over, or the groups of a grouped fold; `marks` set means it counts none. */ units?: number; groups?: number; marks?: string[];
   /** Settled items by resolver: `code`, or the modelId that answered; `reused` maps items answered in an earlier round to that version. */ resolvers?: Record<string, number>; reused?: Record<string, number>;
-  /** Items that left the decision model, by cause (declared, unsure, pass-only-no, over-window, refused, outage); absent when none. */ escalated?: Record<string, number> };
+  /** Items that left the decision model, by cause (declared, unsure, pass-only-no, over-window, refused, outage); absent when none. */ escalated?: Record<string, number>;
+  /** Not run on this verdict: it runs when a person approves the version. */ deferred?: 'approval' };
 // Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? Number(c.met) < 1 : Number(c.met) > 0);
 /** How many items fell short, when the judge counted them: a share over several items, not a single yes/no. */

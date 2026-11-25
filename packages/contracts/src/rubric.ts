@@ -202,8 +202,9 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 14,
+  version: 15,
   // meets_intent is the one scored check and folds to a boolean, so the score is 0 or 1: any threshold above 0 means it must hold.
+  // It runs when a person approves, so a draft's score counts the gates alone.
   threshold: 1,
   criteria: [
     { id: 'sound', checks: [
@@ -217,7 +218,7 @@ export const contractRubric: Rubric = {
       { id: 'breaking_named', label: 'A breaking change names no caller', weight: 'gate', code: breakingNamed },
     ] },
     { id: 'matches_intent', checks: [
-      { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 1 },
+      { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 1, when: 'approval' },
     ] },
   ],
 };

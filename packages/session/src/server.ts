@@ -92,8 +92,10 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   }
   // Swept first, so an answer to a call that has already ended is refused rather than recorded.
   await session.withdrawEnded();
-  if (await resolveApproval(session.root, id, { ...verdict, by: who }, ctx)) return [200, { resolved: true }];
+  const took = await resolveApproval(session.root, id, { ...verdict, by: who }, ctx);
   const item = (await session.harness.snapshot(Approvals, session.root.id, ctx))?.items[id];
+  // An approve the approval gates check first is held, not recorded: the verdict lands, or the approval reopens, once they finish.
+  if (took) return item?.verdict ? [200, { resolved: true }] : [202, { resolved: false, held: true }];
   const w = !item?.verdict && item?.withdrawn;
   return w ? [409, { error: withdrawnText(w.reason), withdrawn: { reason: w.reason, supersededBy: w.supersededBy } }] : [409, { error: 'unknown or already decided' }];
 }

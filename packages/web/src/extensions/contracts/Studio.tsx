@@ -80,7 +80,8 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
     const who = !rejection ? 'someone' : rejection.by.kind === 'person' ? rejection.by.id : 'a reviewer';
     return { can: false, title: `Changes asked for ${name}`, sub: `Asked by ${who}${running ? ' · the agent is revising it' : ''} · nothing waits on you`, detail: rejection?.reason && reasonText(rejection.reason).split('\n').filter(Boolean).slice(0, 2).join('\n') };
   }
-  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: 'Checks passed' };
+  if (s.proposal?.approving) return { can: false, title: `Checking ${name}`, sub: 'Running the model checks on your approve' };
+  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: s.proposal.checks ? 'Model checks failed' : 'Checks passed' };
   return waiting(s);
 }
 
@@ -115,13 +116,15 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
   const deciding = { ...useDecide(sessionKey, proposal, decided), onClose: () => setSheet(undefined) };
   const { drafts, open } = useComments();
   const checks = state.can && pending.verdict;
+  const link = 'min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap underline-offset-2 hover:underline focus-ring';
   const ask = drafts.length ? <button type="button" onClick={() => open({ kind: 'review' })} className={sec}>Review · {drafts.length}</button> : <button type="button" onClick={() => setSheet('ask')} className={sec}>Ask for changes</button>;
   return (
     <section aria-label="Approval" className="sticky bottom-0 z-10 -mx-4 mt-auto flex flex-col gap-1 border-t border-line bg-canvas/95 px-4 pt-2.5 pb-[max(0.625rem,var(--safe-b))] backdrop-blur sm:-mx-5 sm:px-5">
       <div className="flex items-center gap-2">
         <div className="flex min-w-0 flex-1 flex-col">
           <p role="status" className="m-0 text-[15px] leading-snug font-semibold text-ink [overflow-wrap:anywhere]">{state.title}</p>
-          {checks ? <button type="button" onClick={() => setSheet('checks')} className="min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap text-link underline-offset-2 hover:underline focus-ring">Checks passed</button>
+          {state.can && pending.checks ? <button type="button" onClick={() => setSheet('approve')} title="The model checks your approve ran found problems" className={`${link} text-danger`}>Model checks failed</button>
+            : checks ? <button type="button" onClick={() => setSheet('checks')} className={`${link} text-link`}>Checks passed</button>
             : state.sub && <p className="m-0 text-[13px] text-muted">{state.sub}</p>}
         </div>
         {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
@@ -195,7 +198,7 @@ function Contract({ sessionKey, versions: all, newest, spec, status, approvals, 
   const marks = useMemo(() => diff && markBreaks(diff.marks, items), [diff, items]);
   const name = short(newest);
   const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest).state, proposal, approved: approvedV && short(approvedV), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
-  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name };
+  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name, checks: proposal?.checks };
   // Comments are made only on the version up for approval; a sent one's versions are named as the person knows them.
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
   const versionName = useCallback((n: number) => { const v = all.find((x) => x.a.version === n); return v ? short(v) : `#${n}`; }, [all]);

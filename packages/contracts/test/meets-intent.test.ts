@@ -75,13 +75,14 @@ test('a grandfathered string guarantee keeps its key when another is inserted, a
   assert.equal((await keys([long])).length, 3);
 });
 
-test('meets_intent is the one scored check, so a spec passes only when it holds; the unproven checks are gone', () => {
+test('meets_intent is the one scored check and runs only on approve, so a spec passes only when it holds; the unproven checks are gone', () => {
   const checks = contractRubric.criteria.flatMap((c) => c.checks);
   const cut = ['contradicts_guide', 'delivers_purpose', 'adds_unasked', 'implements_non_goal', 'comments_answered'];
   assert.deepEqual(checks.filter((k) => cut.includes(k.id)).map((k) => k.id), []);
   assert.deepEqual(Object.keys(contractDeclaration.checks), ['meets_intent']);
   assert.deepEqual(checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]), [['meets_intent', 1]]);
-  assert.deepEqual([contractRubric.version, contractRubric.threshold], [14, 1]);
+  assert.deepEqual(checks.filter((k) => k.when === 'approval').map((k) => k.id), ['meets_intent'], 'every other check is code, run at each seal');
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [15, 1]);
 });
 
 test('with no guarantees, meets_intent has no items and counts toward neither side', async (t) => {

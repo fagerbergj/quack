@@ -75,7 +75,7 @@ const approval = gated(defineTool({
   description: 'propose_contract',
   parameters: obj({}, { open: true }),
   async execute() { return reply('approved'); },
-}) as ToolRegistration);
+}) as ToolRegistration, { subject: (args) => ({ kind: CONTRACT_KIND, version: (args as Proposed).artifact! }) });
 
 type Outcome = { text: string; isError?: boolean };
 const NOT_NEWEST: Outcome = { text: 'Only the newest sealed version can be put up for approval, once it passes its checks; write artifacts/spec.json and call submit_contract.', isError: true };

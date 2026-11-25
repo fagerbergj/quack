@@ -14,7 +14,8 @@ function headline(v: Verdict, failed: number): string {
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
 export function CheckResult({ verdict, open, summary, about }: { verdict: Verdict; open: boolean; summary?: string; about?: About }) {
   const failed = verdict.checks.filter(checkFailed);
-  const rest = verdict.checks.filter((c) => !checkFailed(c));
+  const later = verdict.checks.filter((c) => c.deferred);
+  const rest = verdict.checks.filter((c) => !checkFailed(c) && !c.deferred);
   const group = (title: string, checks: Check[]) => checks.length > 0 && (
     <div className="flex flex-col">
       <h3 className="m-0 pt-1 text-[11.5px] font-semibold tracking-wide text-muted uppercase">{title}</h3>
@@ -30,6 +31,7 @@ export function CheckResult({ verdict, open, summary, about }: { verdict: Verdic
       <div className="ml-[18px] flex flex-col gap-2 text-ink">
         {group(verdict.limitReached ? 'Released with these unfixed' : 'The revision must fix', failed)}
         {group('Checked, nothing found', rest)}
+        {group('Run when you approve', later)}
       </div>
     </details>
   );

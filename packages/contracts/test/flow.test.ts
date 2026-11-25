@@ -28,9 +28,12 @@ const refIn = (c: Msgs) => /ref "([^"]+)"/.exec(text(c))?.[1] ?? assert.fail(`no
 const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: 'artifacts/spec.json', content: JSON.stringify(spec(), null, 2) })(c);
 const jf = { kind: 'person', name: 'jf' } as const;
 
-// A stub model: judge questions ("Decision: ..." or batched "Evidence: ...") get "yes", except the pitfall questions; everything else follows the script in order.
+// A stub model: judge questions ("Decision: ..." or batched "Evidence: ...") get `judge.says` ("yes" unless a test sets it), except the pitfall
+// questions, and are counted in `judge.asked`; everything else follows the script in order.
+const judge = { says: 'yes', asked: 0 };
 const judgeReply = (p: string) => {
-  const answer = (q: string) => ({ choice: /implement the non-goal/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
+  const answer = (q: string) => ({ choice: /implement the non-goal/.test(q) ? 'no' : judge.says, confidence: 1, reason: judge.says === 'yes' ? 'fine' : 'no field carries it' });
+  if (/^(Decision|Evidence):/.test(p)) judge.asked++;
   if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));
   if (p.startsWith('Evidence:')) return fauxAssistantMessage(JSON.stringify(Object.fromEntries([...p.matchAll(/^- (q\d+): ([\s\S]*?)\n  Options:/gm)].map(([, id, q]) => [id, answer(q)]))));
   return undefined;
@@ -202,8 +205,12 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   await s.close();
   const record = await readSession(dirname(s.workspace));
   const adapter = manifest.evalAdapters![0].judge!;
-  assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(record, v.content))), live);
-  assert.deepEqual(live.map((got) => (JSON.parse(got.facts) as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
+  // Each approve reads the version's inputs again, as its seal did: v1 seal and approve, the v2 attempt, then v2's seal and approve.
+  assert.deepEqual(live.map((got) => JSON.parse(got.facts).expected), [1, 1, 2, 2, 2]);
+  assert.deepEqual([live[0], live[3]], [live[1], live[4]]);
+  const sealed = [live[0], live[2], live[3]];
+  assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(record, v.content))), sealed);
+  assert.deepEqual(sealed.map((got) => (JSON.parse(got.facts) as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
 });
 
 test('a version that passes is put up for approval in the same submit, and approving records that exact artifact', async () => {
@@ -223,6 +230,67 @@ test('a version that passes is put up for approval in the same submit, and appro
   const [approved] = await kindOf(s, 'contract.approved');
   assert.deepEqual([approved.outcome, approved.summary], ['v1', 'Approved version 1']);
   assert.deepEqual(JSON.parse(approved.content), { version: 1, artifact: 1, hash: v1.hash, note: 'Approved version 1', approval: item.id });
+  await s.close();
+});
+
+type Held = { passed: boolean; feedback: string[]; detail: { passed: boolean; checks: Array<{ id: string; met: unknown; notes: string[] }> } };
+const checksOf = (s: Open, id: string) => first(s, Approvals, (v) => ((v as { items?: Record<string, { checks?: Held | null }> } | null)?.items?.[id]?.checks ?? undefined));
+const judgeSays = (t: { after: (fn: () => void) => void }, says: string) => {
+  Object.assign(judge, { says, asked: 0 });
+  t.after(() => Object.assign(judge, { says: 'yes', asked: 0 }));
+};
+const settings = (after: Step[]) => open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...after]);
+
+test('a draft seals on its code checks with no model call; the model checks run on approve, and a pass completes it', async (t) => {
+  judgeSays(t, 'yes');
+  const s = await settings([() => fauxAssistantMessage('Version 1 is approved.')]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  const p = await nextProposal(s);
+  const [v1] = await versions(s);
+  const draft = v1.verdict as { passed: boolean; score: number; checks: Array<{ id: string; met: unknown; deferred?: string }> };
+  assert.equal(judge.asked, 0, 'the draft sealed with no model call');
+  assert.deepEqual([draft.passed, draft.score], [true, 1]);
+  assert.deepEqual(draft.checks.filter((c) => c.deferred).map((c) => [c.id, c.met, c.deferred]), [['meets_intent', null, 'approval']], 'the draft says its model check has not run');
+  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx), true);
+  assert.equal((await run).status, 'done');
+  assert.ok(judge.asked > 0, 'the approve asked the judge model');
+  const held = await checksOf(s, p.id);
+  assert.deepEqual([held.passed, held.detail.passed, held.detail.checks.find((c) => c.id === 'meets_intent')?.met], [true, true, true]);
+  assert.equal((await kindOf(s, 'contract.approved')).length, 1);
+  await s.close();
+});
+
+test('failing model checks hold the approval open with their findings; a plain approve then records it over them, asking no model again', async (t) => {
+  judgeSays(t, 'no');
+  const s = await settings([() => fauxAssistantMessage('Version 1 is approved.')]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  const p = await nextProposal(s);
+  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx), true);
+  const held = await checksOf(s, p.id);
+  assert.equal(held.passed, false);
+  assert.match(held.feedback.join('\n'), /missed matches_intent\.meets_intent[\s\S]*no field carries it/);
+  assert.equal(held.detail.checks.find((c) => c.id === 'meets_intent')?.met, false);
+  assert.deepEqual((await pendingApprovals(s.root, ctx)).map((a) => a.id), [p.id], 'the approval waits on the person again');
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0, 'nothing is approved while the findings stand');
+  const asked = judge.asked;
+  assert.equal(await resolveApproval(s.root, p.id, { decision: 'approve', reason: 'Approved over the findings', by: jf }, ctx), true);
+  assert.equal((await run).status, 'done');
+  assert.equal(judge.asked, asked, 'approving anyway runs no model check');
+  assert.deepEqual((await kindOf(s, 'contract.approved')).map((r) => JSON.parse(r.content).approval), [p.id]);
+  await s.close();
+});
+
+test('findings sent back with Ask for changes reach the agent as a rejection to revise', async (t) => {
+  judgeSays(t, 'no');
+  let seen = '';
+  const s = await settings([(c) => ((seen = text(c)), fauxAssistantMessage('Revising.')), () => fauxAssistantMessage('Later.')]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  const p = await nextProposal(s);
+  await resolveApproval(s.root, p.id, { decision: 'approve', by: jf }, ctx);
+  const held = await checksOf(s, p.id);
+  assert.equal(await resolveApproval(s.root, p.id, { decision: 'reject', reason: held.feedback.join('\n'), by: jf }, ctx), true);
+  await run;
+  assert.match(seen, /Rejected by jf: contract\.spec v1: [\s\S]*missed matches_intent\.meets_intent[\s\S]*write version 2/);
   await s.close();
 });
 

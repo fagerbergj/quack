@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { gated, type Approval } from '../src/index.ts';
+import { gate, gated, resolveApproval, type Approval } from '../src/index.ts';
 
 function setup(existing: Approval) {
   const doc = { items: { '1': existing } as Record<string, Approval> };
@@ -58,4 +58,31 @@ test('gated does not open or leak a watchDoc subscription when an approval is al
   const res = await tool.execute({ body: 'hi' } as never, api as never, ctx);
   assert.equal(res.isError, true);
   assert.deepEqual(counts(), { watched: 0, stopped: 0, ran: 0 });
+});
+
+const asked = (over: Partial<Approval> = {}): Approval => ({ tool: 'post_comment', args: { body: 'hi' }, requestedAt: 1, verdict: null, executing: false, done: false, subject: { kind: 'k', version: 1 }, ...over });
+const jf = { kind: 'person', name: 'jf' } as const;
+
+test("a person's approve of a subject runs the approval gates first; a pass records it as the verdict and runs the tool", async (t) => {
+  let saw: unknown;
+  t.after(gate('approval.approving', async (e) => ((saw = e.data.id), { kind: 'pass', detail: { ok: true } })));
+  const approving = { decision: 'approve' as const, reason: null, by: jf, at: 5 };
+  const { tool, api, counts } = setup(asked({ approving }));
+  const res = await tool.execute({ body: 'hi' } as never, api as never, ctx);
+  assert.equal(res.isError, undefined);
+  assert.deepEqual([saw, counts()], ['1', { watched: 0, stopped: 0, ran: 1 }]);
+});
+
+test('resolveApproval holds an approve of a subject for the gates, refuses a second one meanwhile, and records one over failed checks', async () => {
+  const doc = { items: { a: asked(), b: asked({ checks: { at: 2, passed: false, feedback: ['no'], detail: null } }), c: asked({ subject: null }) } as Record<string, Approval> };
+  const conversation = { id: 'c', commit: async <T>(fn: (tx: { doc: () => Promise<typeof doc> }) => Promise<T>) => fn({ doc: async () => doc }) };
+  const approve = (id: string) => resolveApproval(conversation as never, id, { decision: 'approve', by: jf }, ctx);
+  assert.equal(await approve('a'), true);
+  assert.deepEqual([doc.items.a.verdict, doc.items.a.approving?.decision], [null, 'approve']);
+  assert.equal(await approve('a'), false, 'an approve being checked is not decided again');
+  assert.equal(await resolveApproval(conversation as never, 'a', { decision: 'reject', reason: 'no', by: jf }, ctx), true, 'a reject still lands');
+  assert.equal(await approve('b'), true);
+  assert.equal(doc.items.b.verdict?.decision, 'approve', 'the person approves over the findings');
+  assert.equal(await approve('c'), true);
+  assert.equal(doc.items.c.verdict?.decision, 'approve', 'an approval with no subject is recorded at once');
 });

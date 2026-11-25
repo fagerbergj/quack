@@ -4,7 +4,8 @@ import type { Context } from '@earendil-works/chord/context';
 import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
 import { approvalOpenedData, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
-import { defineDoc, InboxDoc, type Conversation, type ConversationId, type Tx, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
+import { runApprovalGates, type ApprovalChecks } from './gates.ts';
+import { defineDoc, InboxDoc, type Conversation, type ConversationId, type Tx, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
 // `by` is a bare string in verdicts recorded before principals were typed.
@@ -20,6 +21,12 @@ export type Approval = {
   done: boolean;
   // Absent on rows written before withdrawal existed, which read as null.
   withdrawn?: Withdrawal | null;
+  /** The sealed artifact version the approval decides on; a person's approve of one runs the approval.approving gates before it is recorded. */
+  subject?: { kind: string; version: number } | null;
+  /** A person's approve the gates are still checking; it becomes the verdict once they pass. */
+  approving?: Verdict | null;
+  /** What the gates found on the last approve; failed ones leave the approval open, and the next approve is recorded over them. */
+  checks?: ApprovalChecks | null;
 };
 
 /** Why the call that asked can no longer act on its approval; core writes task_ended, arguments_changed and steered, an extension superseded. */
@@ -87,7 +94,7 @@ function errorResult(text: string): ToolExecutionResult {
 async function waitForAnswer(watch: { value: Readonly<ApprovalsDoc> | null; start: Function; stop: () => Promise<unknown> }, id: string, ctx: Context) {
   try {
     return await new Promise<Approval>((resolve, reject) => {
-      const found = () => { const a = watch.value?.items[id]; return a?.verdict || a?.withdrawn ? a : undefined; };
+      const found = () => { const a = watch.value?.items[id]; return a?.verdict || a?.withdrawn || a?.approving ? a : undefined; };
       if (found()) return resolve(plain(found()!));
       if (ctx.abortSignal?.aborted) return reject(ctx.abortSignal.reason);
       ctx.abortSignal?.addEventListener('abort', () => reject(ctx.abortSignal!.reason), { once: true });
@@ -98,9 +105,39 @@ async function waitForAnswer(watch: { value: Readonly<ApprovalsDoc> | null; star
   }
 }
 
+// The gates run on a person's approve; a pass records it as the verdict, a failure clears it and keeps the approval open with their findings.
+async function checkApprove(api: ToolExecutionApi, id: string, asked: Approval, ctx: Context): Promise<Approval> {
+  const checks = await runApprovalGates(api, id, asked, ctx);
+  return api.commit(async (tx) => {
+    const row = (await tx.doc(Approvals, api.conversationId)).items[id];
+    if (row.verdict || row.withdrawn) return plain(row);
+    row.checks = plain(checks);
+    row.verdict = checks.passed ? row.approving! : null;
+    row.approving = null;
+    return plain(row);
+  }, ctx);
+}
+
+// Waits until the approval is decided or withdrawn, checking each approve on the way; undefined when approval state cannot be watched.
+async function decided(api: ToolExecutionApi, id: string, item: Approval, ctx: Context): Promise<Approval | undefined> {
+  let a = item;
+  while (!a.verdict && !a.withdrawn) {
+    if (!a.approving) {
+      const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
+      if (!watch) return undefined;
+      a = await whileWaiting(() => waitForAnswer(watch as never, id, ctx));
+    }
+    if (a.approving && !a.verdict && !a.withdrawn) a = await checkApprove(api, id, a, ctx);
+  }
+  return a;
+}
+
+/** `subject` names the sealed artifact version an approval of these arguments decides on, so the approval.approving gates check it. */
+export type GatedOptions = { subject?: (args: JsonValue) => { kind: string; version: number } | undefined };
+
 // A gated tool waits durably for a verdict before it runs (GATE-5..8). Replay-safe: a rerun after a crash finds its approval by task id,
 // unless it came back with other arguments: a verdict on the first ones must not run these.
-export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistration<P> {
+export function gated<P extends object>(tool: ToolRegistration<P>, opts: GatedOptions = {}): ToolRegistration<P> {
   return {
     ...tool,
     replay: 'safe',
@@ -114,19 +151,16 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
         const doc = await tx.doc(Approvals, api.conversationId);
         const fresh = plain(args) as JsonValue;
         withdrawApprovals(doc, (k, a) => k === id && !isDeepStrictEqual(a.args, fresh), { at: api.now(), reason: 'arguments_changed', supersededBy: null });
-        doc.items[id] ??= { tool: tool.name, args: fresh, requestedAt: api.now(), verdict: null, executing: false, done: false };
+        const subject = opts.subject?.(fresh);
+        doc.items[id] ??= { tool: tool.name, args: fresh, requestedAt: api.now(), verdict: null, executing: false, done: false, ...(subject && { subject }) };
         // A message queued before the row opened (or before a restart reran this call) withdraws it at once; a child's rows are left alone.
         if (conversation && !conversation.owner && !conversation.parent) await withdrawForMessages(tx, api.conversationId, doc, api.now(), { pick: (k) => k === id });
         return plain(doc.items[id]);
       }, ctx);
       if (item.executing && !item.done) return errorResult(`${tool.name} was interrupted after approval and was not re-run.`);
 
-      let answered = item;
-      if (!item.verdict && !item.withdrawn) {
-        const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
-        if (!watch) return errorResult('approval state is unavailable');
-        answered = await whileWaiting(() => waitForAnswer(watch as never, id, ctx));
-      }
+      const answered = await decided(api, id, item, ctx);
+      if (!answered) return errorResult('approval state is unavailable');
       if (answered.withdrawn) return notRun(tool.name, answered.withdrawn);
       const verdict = answered.verdict!;
       if (verdict.decision === 'reject') return errorResult(`Rejected by ${principalName(verdict.by)}${verdict.reason ? `: ${verdict.reason}` : ''}`);
@@ -139,18 +173,23 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
   };
 }
 
+/** The approvals waiting on a person; one whose approve the gates are checking waits on them, not on a person. */
 export async function pendingApprovals(conversation: Conversation, ctx: Context): Promise<Array<Approval & { id: string }>> {
   const doc = await conversation.commit(async (tx) => plain(await tx.doc(Approvals, conversation.id)), ctx);
-  return Object.entries(doc.items).filter(([, a]) => !a.verdict && !a.withdrawn).map(([id, a]) => ({ id, ...a }));
+  return Object.entries(doc.items).filter(([, a]) => !a.verdict && !a.withdrawn && !a.approving).map(([id, a]) => ({ id, ...a }));
 }
 
-// Records a verdict; returns false when the approval is unknown, already decided or withdrawn.
+// Records a verdict; returns false when the approval is unknown, already decided or withdrawn, or an approve of it is being checked.
+// An approve of a subject waits for the gates, unless they already failed it: the person then approves over their findings.
 export async function resolveApproval(conversation: Conversation, id: string, verdict: { decision: Verdict['decision']; reason?: string; by: Principal }, ctx: Context): Promise<boolean> {
   return conversation.commit(async (tx) => {
     const doc = await tx.doc(Approvals, conversation.id);
     const item = doc.items[id];
     if (!item || item.verdict || item.withdrawn) return false;
-    item.verdict = { decision: verdict.decision, reason: verdict.reason ?? null, by: verdict.by, at: Date.now() };
+    const v: Verdict = { decision: verdict.decision, reason: verdict.reason ?? null, by: verdict.by, at: Date.now() };
+    if (verdict.decision === 'reject' || !item.subject || item.checks) item.verdict = v;
+    else if (item.approving) return false;
+    else item.approving = v;
     return true;
   }, ctx);
 }

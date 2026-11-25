@@ -1,8 +1,9 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { artifactKind, Artifacts, gate, latestSealed, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import type { JsonValue } from '@earendil-works/chord';
+import { artifactKind, Artifacts, gate, latestSealed, sealedVersion, unsubmitted, type Approval, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
-import { check, report, type JudgeOptions, type Verdict } from './index.ts';
+import { check, checkApproval, hasApprovalChecks, report, type JudgeOptions, type Verdict } from './index.ts';
 import type { DecisionModelRef, ModelRef } from './resolve.ts';
 import type { Rubric } from './rubric.ts';
 
@@ -32,12 +33,13 @@ const JUDGE_TIMEOUT_MS = 60 * 60_000;
 
 const toolOf = (kind: string) => artifactKind(kind)?.tool;
 
+const optionsFor = (kind: string, how: Judged, config: JudgeConfig): JudgeOptions => ({ kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, reuse: true });
+
 async function verdictFor(api: ToolExecutionApi, ctx: Context, how: Judged, config: JudgeConfig, sealed: SealedArtifact): Promise<GateVerdict> {
   const refused = await how.refuse?.(api, ctx);
   if (refused) return { kind: 'deny', reason: refused };
   const tool = toolOf(sealed.kind) ?? 'the judge';
-  const opts: JudgeOptions = { kind: sealed.kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, reuse: true };
-  const out = await check(api, opts, sealed, tool, ctx);
+  const out = await check(api, optionsFor(sealed.kind, how, config), sealed, tool, ctx);
   if ('deny' in out) return { kind: 'deny', reason: out.deny };
   if ('undecided' in out) return { kind: 'continue', feedback: out.undecided };
   const text = report(sealed, out.verdict, tool);
@@ -90,15 +92,33 @@ const yieldHook = () => {
   });
 };
 
+// A person's approve of a registered kind's version runs the checks its seals left for then; the approval keeps the verdict as the detail.
+async function approvalVerdict(api: ToolExecutionApi, ctx: Context, config: JudgeConfig, approval: Approval): Promise<GateVerdict | undefined> {
+  const s = approval.subject;
+  const how = s && registry.get(s.kind);
+  if (!s || !how || !hasApprovalChecks(how.rubric)) return undefined;
+  const sealed = await sealedVersion(api, s.kind, s.version, ctx);
+  if (!sealed) return { kind: 'deny', reason: `${s.kind} v${s.version} is not sealed, so its checks cannot run` };
+  const v = await checkApproval(api, optionsFor(s.kind, how, config), sealed, ctx);
+  const detail = v as unknown as JsonValue;
+  // An undecided check is not a pass: the person sees which ones no model answered and decides.
+  if (v.undecided.length) return { kind: 'continue', feedback: `The decision model or the judge model gave no usable answer for ${v.undecided.join(', ')}, so these checks did not run.`, detail };
+  return v.passed ? { kind: 'pass', detail } : { kind: 'continue', feedback: report(sealed, v, toolOf(s.kind) ?? 'the judge'), detail };
+}
+
 let unregister: (() => void) | undefined;
 
-/** The judge's session half: its gate on artifact.sealed for registered kinds, and the yield hook for those with a seal tool. */
+/** The judge's session half: its gates on artifact.sealed and approval.approving for registered kinds, and the yield hook for those with a seal tool. */
 export function judgeSession(config: JudgeConfig): Extension[] {
   unregister?.();
-  unregister = gate('artifact.sealed', async (event, p) => {
-    const how = registry.get(event.data.kind);
-    return how && verdictFor(p.api!, p.ctx!, how, config, event.data);
-  }, { timeoutMs: JUDGE_TIMEOUT_MS });
+  const offs = [
+    gate('artifact.sealed', async (event, p) => {
+      const how = registry.get(event.data.kind);
+      return how && verdictFor(p.api!, p.ctx!, how, config, event.data);
+    }, { timeoutMs: JUDGE_TIMEOUT_MS }),
+    gate('approval.approving', (event, p) => approvalVerdict(p.api!, p.ctx!, config, event.data.approval), { timeoutMs: JUDGE_TIMEOUT_MS }),
+  ];
+  unregister = () => offs.forEach((off) => off());
   return [defineExtension({ name: 'judge', hooks: [yieldHook()] })];
 }
 

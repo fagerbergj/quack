@@ -50,8 +50,8 @@ let unregister: (() => void) | undefined;
 export function contractsSessionExtensions(inputs = specInputs()): Extension[] {
   judged(specKind.kind, { rubric: contractRubric, declaration: contractDeclaration, inputs });
   unregister?.();
-  // The person's wait is exempt from the gate's bound: the approval waits through whileWaiting.
-  unregister = gate('artifact.sealed', proposeGate);
+  // The person's wait is exempt from the gate's bound (whileWaiting); the model checks their approve runs are not, so the bound is the judge's.
+  unregister = gate('artifact.sealed', proposeGate, { timeoutMs: 60 * 60_000 });
   return [defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval()] }), artifactsExtension([specKind])];
 }
 export { contractOf as contractRecordOf, contractsApp, type ContractRecord } from './app.ts';
