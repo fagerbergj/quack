@@ -5,7 +5,8 @@ import { failedLine, type Row } from './sessions.ts';
 
 export type Tone = 'muted' | 'warn' | 'bad';
 
-export type Look = { wait?: ModelWait; label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
+/** `why` is the line's longer reading, for its tooltip and screen readers. */
+export type Look = { wait?: ModelWait; why?: string; label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
 
 const CHAT = 'M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 10h8M8 13h5';
 const DOC = 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6';
@@ -32,9 +33,20 @@ export function look(r: Row): Look {
   const kind = kindOf(r);
   const { num, repo, title, full } = kind.name(r);
   const w = kind.words(r);
+  return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown(r, w) };
+}
+
+const INTERRUPTED = { line: 'Interrupted', tone: 'muted' as const, why: 'The last run stopped before it finished; it resumes on the next message' };
+// No outcome after activity: the newest run started (which clears lastRun) and its process stopped before it ended.
+const interrupted = (r: Row) => r.state !== 'running' && !r.lastRun && Date.parse(r.lastActivity) > Date.parse(r.createdAt);
+
+function shown(r: Row, w: Words | undefined): Pick<Look, 'line' | 'tone' | 'wait' | 'why'> {
   const failure = r.failures[0];
-  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : r.pendingAsks ? { line: waiting(r.pendingAsks), tone: 'warn' as const } : r.waiting && (r.state === 'running' || r.waiting.error) ? { line: 'Waiting…', tone: 'muted' as const, wait: r.waiting } : w ? state(r, w) : { line: r.agent, tone: 'muted' as const };
-  return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
+  if (failure) return { line: failedLine(failure), tone: 'bad' };
+  if (r.pendingAsks) return { line: waiting(r.pendingAsks), tone: 'warn' };
+  if (r.waiting && (r.state === 'running' || r.waiting.error)) return { line: 'Waiting…', tone: 'muted', wait: r.waiting };
+  if (interrupted(r)) return INTERRUPTED;
+  return w ? state(r, w) : { line: r.agent, tone: 'muted' };
 }
 
 // `scope` is where the session lives (a review's repo) whether or not the list prefixes it as `repo`.

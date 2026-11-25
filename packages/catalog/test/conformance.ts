@@ -119,6 +119,12 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       assert.equal(await store.watermark('k'), 16, 'action writes never move the watermark');
       assert.equal(await store.getSession('nope'), undefined);
       assert.equal(await store.watermark('nope'), undefined);
+      await store.transitionSession(event('run:2:started', 17), { key: 'k', to: 'running' });
+      assert.equal((await store.getSession('k'))?.lastRun, undefined, 'a running event clears lastRun until the next run ends');
+      // A wake over a run that never ended: the row still holds running, so the move is refused, and the older outcome must still go.
+      await store.recordRunOutcome(event('run:2:ended', 18), { key: 'k', outcome: 'failed', endedAt: T0 + 60, failedSteps: [{ step: 'model', error: 'gone' }] });
+      assert.deepEqual(await store.transitionSession(event('state:run:3:resume:1', 19), { key: 'k', to: 'running' }), { applied: false, state: 'running' });
+      assert.equal((await store.getSession('k'))?.lastRun, undefined, 'a refused running move still clears lastRun');
     });
 
     test('(2) replay is a no-op, and a same-id event at a higher seq supersedes once', async () => {

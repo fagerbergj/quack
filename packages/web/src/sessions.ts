@@ -9,11 +9,12 @@ import { searchTerms, type FilterValues } from './SearchFilter.tsx';
 export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Spend };
 
 // A failure is shown only while it is the latest thing: activity or an ask after it (a run waiting on approval) supersedes it.
-const latestFailure = ({ lastRun: r, lastActivity, oldestAskAt }: Session) =>
-  r?.outcome === 'failed' && ![lastActivity, oldestAskAt].some((t) => t !== undefined && Date.parse(t) > Date.parse(r.endedAt));
+// Rows the catalog wrote before a running event cleared lastRun still carry such failures.
+const failuresOf = ({ state, lastRun: r, lastActivity, oldestAskAt }: Session): Failure[] =>
+  state !== 'running' && r?.outcome === 'failed' && ![lastActivity, oldestAskAt].some((t) => t !== undefined && Date.parse(t) > Date.parse(r.endedAt))
+    ? r.failedSteps : [];
 
-export const rowOf = (s: Session, multiRepo: boolean): Row =>
-  ({ ...s, multiRepo, spend: spendOf(s), failures: s.state !== 'running' && latestFailure(s) ? s.lastRun!.failedSteps : [] });
+export const rowOf = (s: Session, multiRepo: boolean): Row => ({ ...s, multiRepo, spend: spendOf(s), failures: failuresOf(s) });
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 
 // The display title as one string, e.g. "#1927 Add retries"; the full key stays in the row's tooltip.
