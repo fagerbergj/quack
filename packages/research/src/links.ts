@@ -1,5 +1,5 @@
 import type { CodeResult } from '@quack/judge';
-import { citedIds } from '@quack/sdk/report';
+import type { Root } from 'mdast';
 import { nodes, parse } from './markdown.ts';
 
 /** What the session retrieved by the time the report was sealed: each fetch's source id, final URL and the URL asked for, and every search hit's URL. */
@@ -33,9 +33,14 @@ export function pageKey(raw: string): string | undefined {
 }
 
 /** The http(s) links of a report in order, each once: inline, reference definitions and bare URLs; code is quoted material, not a link. */
-export function linksOf(report: string): string[] {
-  const urls = [...nodes(parse(report))].flatMap((n) => (n.type === 'link' || n.type === 'definition' ? [n.url] : []));
-  return [...new Set(urls.filter((u) => /^https?:/i.test(u)))];
+export const linksOf = (report: string) => refsOf(parse(report)).links;
+
+// Marks are read off the same tree as links, so one in any code, an indented block included, cites nothing.
+function refsOf(tree: Root) {
+  const all = [...nodes(tree)];
+  const urls = all.flatMap((n) => (n.type === 'link' || n.type === 'definition' ? [n.url] : []));
+  const ids = all.flatMap((n) => (n.type === 'text' ? [...n.value.matchAll(/\[(s\d+)\]/g)].map((m) => m[1]) : []));
+  return { links: [...new Set(urls.filter((u) => /^https?:/i.test(u)))], ids: [...new Set(ids)] };
 }
 
 const shared = (a: string, b: string) => {
@@ -61,11 +66,10 @@ function retrieved(log: FetchLog): Map<string, string> {
 /** Every link names a page this session fetched or saw in a search result, and every [sN] a fetch it made. */
 export function linksRetrieved(report: string, log: FetchLog): CodeResult {
   const known = retrieved(log);
-  const ids = new Set(log.fetched.map((f) => f.id));
-  const links = linksOf(report);
-  const cited = citedIds(report);
+  const returned = new Set(log.fetched.map((f) => f.id));
+  const { links, ids: cited } = refsOf(parse(report));
   const bad = links.filter((u) => !known.has(pageKey(u) ?? u));
-  const unknown = cited.filter((id) => !ids.has(id));
+  const unknown = cited.filter((id) => !returned.has(id));
   const notes = [
     ...bad.map((u) => {
       const near = nearest(pageKey(u) ?? u, known);

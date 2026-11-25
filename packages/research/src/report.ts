@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { Declaration, Evidence, Inputs, Rubric } from '@quack/judge';
+import { factsOf, type Declaration, type Inputs, type Rubric } from '@quack/judge';
 import type { ArtifactKind, RecordedSession } from '@quack/sdk';
 import { citedIds, fenced, findingItems, sectionBody, splitReport, type Section } from '@quack/sdk/report';
 import { linksRetrieved, type FetchLog } from './links.ts';
@@ -67,21 +67,19 @@ export function parseReport(report: string): { sections: Record<string, string>;
   return { sections: Object.fromEntries(keys.map((k) => [k, sectionBody(report, [k])])), citedIds: citedIds(report), findings: findingItems(report) };
 }
 
-const logOf = (ev: Evidence) => ev.log[0].state.log as unknown as FetchLog;
-
-/** How each model check of researchRubric is asked; the log scope only carries the fetch log to the link gate. */
+/** How each model check of researchRubric is asked; the facts scope only carries the fetch log to the link gate. */
 export const reportDeclaration: Declaration = {
-  scopes: { log: { split: { name: 'whole', from: 'log' }, piece: 'log' }, ...styleScopes },
+  scopes: { facts: { split: { name: 'whole', from: 'log' }, piece: 'facts' }, ...styleScopes },
   checks: styleDecls,
 };
 
-// A clean report scores 1; a share of a check's units with its problem costs that share of the check's weight.
+// Style is feedback: the 8 held-out prod reports score 0.75 to 1 under Clef, and a report full of style problems scores well under 0.6.
 export const researchRubric: Rubric = {
   name: 'research.report',
   version: 15,
-  threshold: 0.7,
+  threshold: 0.6,
   criteria: [
-    { id: 'links', checks: [{ id: 'links_retrieved', label: 'Links a page it never fetched or found', weight: 'gate', code: (report, ev) => linksRetrieved(report, logOf(ev)) }] },
+    { id: 'links', checks: [{ id: 'links_retrieved', label: 'Links a page it never fetched or found', weight: 'gate', code: (report, ev) => linksRetrieved(report, factsOf<FetchLog>(ev)) }] },
     { id: 'style', checks: styleChecks },
   ],
 };

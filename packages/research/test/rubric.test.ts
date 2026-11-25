@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
-import { buildEvidence, decisionModelTokens, rejudge, type Verdict } from '@quack/judge';
+import { buildEvidence, CONFIDENT_ONLY, decisionModelTokens, rejudge, type Verdict } from '@quack/judge';
 import { fakeClef } from '../../contracts/test/clef.ts';
 import { inputsOf, manifest, reportDeclaration, researchRubric, type SourceRecord } from '../src/index.ts';
 import { linksOf, linksRetrieved, pageKey, type FetchLog } from '../src/links.ts';
@@ -85,6 +85,7 @@ test('links_retrieved: a page neither fetched nor found fails, naming the URL an
   assert.equal(r.detail, 'https://docs.example.com/guide/upgrade was neither fetched nor in a search result (the nearest page this session retrieved is https://docs.example.com/guide/install); https://elsewhere.test/x was neither fetched nor in a search result; [s9] is no source id a web_fetch returned. Fetch each page you link with web_fetch, or drop the link.');
   assert.equal(linksRetrieved(cites('Story https://news.example.org/story?id=8 [s1].'), LOG).met, 0.5, 'another id is another story');
   assert.equal(linksRetrieved(cites('The guide root https://docs.example.com/ [s1].'), LOG).met, 0.5, 'a fetched sub-page does not vouch for its parent');
+  assert.deepEqual(linksRetrieved(cites('Per the page [s1]:', '', '    curl https://code.test/x [s9]', ''), LOG), { met: 1 }, 'a link or mark in an indented code block is quoted, not cited');
 });
 
 test('the inputs carry the fetch log and the search hits, and the gate reads them through the declaration', () => {
@@ -96,7 +97,7 @@ test('the inputs carry the fetch log and the search hits, and the gate reads the
 });
 
 test('the rubric is the link gate and five lintdec style checks, warnings weighing twice an info', () => {
-  assert.deepEqual([researchRubric.name, researchRubric.version, researchRubric.threshold], ['research.report', 15, 0.7]);
+  assert.deepEqual([researchRubric.name, researchRubric.version, researchRubric.threshold], ['research.report', 15, 0.6]);
   assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [`${c.id}.${k.id}`, k.code ? 'code' : 'model', k.weight])), [
     ['links.links_retrieved', 'code', 'gate'],
     ['style.no_purpose', 'model', 2],
@@ -105,7 +106,7 @@ test('the rubric is the link gate and five lintdec style checks, warnings weighi
     ['style.wordy_phrase', 'model', 1],
     ['style.list_not_parallel', 'model', 1],
   ]);
-  for (const d of Object.values(reportDeclaration.checks)) assert.deepEqual([d.question.type, d.question.type === 'bool' && d.question.pass, d.decisionModel], ['bool', ['no'], undefined], 'Clef settles each item first');
+  for (const d of Object.values(reportDeclaration.checks)) assert.deepEqual([d.question.type, d.question.type === 'bool' && d.question.pass, d.decisionModel], ['bool', ['no'], CONFIDENT_ONLY], 'a style finding stands only when Clef is sure of it');
 });
 
 test('sentences: a stop before a capital ends one; an abbreviation or initial does not', () => {
@@ -134,13 +135,13 @@ const units = (md: string) => {
   return Object.fromEntries(Object.keys(reportDeclaration.checks).map((id) => [id, ev[id].map((u) => `${u.id}: ${Object.values(u.state)[0]}`)]));
 };
 
-test('each style check asks one question per unit of its kind: the opening, paragraphs, long paragraphs, marked wordy phrases and mixed lists', () => {
+test('each style check asks one question per unit of its kind: the opening, sentences that could hold an inline list, long paragraphs, marked wordy phrases and mixed lists', () => {
   assert.deepEqual(units(CLEAN), {
     no_purpose: ['no_purpose opening: ## Summary\nMallards leave the north in October and fly up to 800 km a day.'],
-    prose_list: ['prose_list paragraph-1: Mallards leave the north in October and fly up to 800 km a day.', 'prose_list paragraph-2: We read "ducks" as mallards. The survey covers 2025.'],
-    topic_sentence: [], wordy_phrase: [], list_not_parallel: [],
+    prose_list: [], topic_sentence: [], wordy_phrase: [], list_not_parallel: [],
   });
   const messy = units(MESSY);
+  assert.deepEqual(messy.prose_list, ['prose_list sentence-4: We create, update, publish, and delete the counts in four tables, then merge them, then chart them.'], 'only a sentence with two separators could hold three inline items');
   assert.deepEqual(messy.topic_sentence, ['topic_sentence paragraph-2: We read "ducks" as mallards. The survey covers 2025. We create, update, publish, and delete the counts in four tables, then merge them, then chart them.']);
   assert.deepEqual(messy.wordy_phrase, ['wordy_phrase phrase-1: ⟦In order to⟧ rest, flocks stop on lakes between legs.']);
   assert.deepEqual(messy.list_not_parallel, ['list_not_parallel list-1: - Mallards fly south in October.\n- **Range:** up to 800 km in a day.\n- In order to rest, flocks stop on lakes between legs.']);
@@ -150,6 +151,13 @@ test('wordy_phrase skips a negated phrase, a quotation and code; list_not_parall
   const md = '## Summary\nIt is not able to fly. Its maker said "we built it in order to fly far" [s1]. Run `in order to` now. It flies prior to dawn.\n\n## Findings\n- **A:** one [s1].\n- **B:** two [s1].\n';
   assert.deepEqual(units(md).wordy_phrase, ['wordy_phrase phrase-1: It flies ⟦prior to⟧ dawn.']);
   assert.deepEqual(units(md).list_not_parallel, []);
+  const linked = units('## Findings\n- [Duck facts](https://birds.test/ducks) says ducks fly [s1].\n- Ducks eat seeds [s1].\n');
+  assert.deepEqual(linked.list_not_parallel, ['list_not_parallel list-1: - [Duck facts] says ducks fly.\n- Ducks eat seeds.'], 'Clef sees the link opening that put the list here');
+});
+
+test('no_purpose marks where it cut a long opening', () => {
+  const [opening] = units(`## Summary\n${'Ducks fly far. '.repeat(200)}\n`).no_purpose;
+  assert.match(opening, /\n… \(cut at 2000 characters\)$/);
 });
 
 const FLAWS = ['create, update', '⟦In order to⟧', '**Range:**'];
@@ -174,17 +182,18 @@ test('a clean report passes on Clef alone; one wordy phrase still passes; a repo
   const clean = await judged(t, CLEAN);
   assert.deepEqual([clean.passed, clean.score], [true, 1]);
   const one = await judged(t, CLEAN.replace('- Flocks rest on lakes', '- In order to rest, flocks stop on lakes'));
-  assert.deepEqual([one.passed, one.score], [true, 0.75]);
+  assert.deepEqual([one.passed, one.score], [true, 2 / 3]);
   const messy = await judged(t, MESSY);
   assert.equal(messy.passed, false);
   assert.deepEqual(messy.checks.map((k) => [k.id, k.met, k.resolvers]), [
     ['links_retrieved', 1, { code: 1 }],
     ['no_purpose', 1, { clef: 1 }],
-    ['prose_list', 0.5, { clef: 2 }],
+    ['prose_list', 0, { clef: 1 }],
     ['topic_sentence', 0, { clef: 1 }],
     ['wordy_phrase', 0, { clef: 1 }],
     ['list_not_parallel', 0, { clef: 1 }],
   ]);
+  // TODO(research-style): #2565 rewords the judge's reasonless-flag tail for style checks; update this assertion with it.
   assert.match(messy.checks[4].notes[0], /^wordy_phrase phrase-1: flagged by clef \(no reason given\): "⟦In order to⟧ rest/);
 });
 

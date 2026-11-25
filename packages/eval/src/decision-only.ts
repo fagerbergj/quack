@@ -1,10 +1,10 @@
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { CAUSES, PASS_ONLY, passingOptions, type Cause, type CheckDecl } from '@quack/judge';
+import { CAUSES, CONFIDENT_ONLY, PASS_ONLY, passingOptions, type Cause, type CheckDecl } from '@quack/judge';
 
 export { CAUSES, type Cause };
 
-/** An item under decision-only: the decision model's pass or standing no, an escalation (unanswered) by cause, or `unasked` once its check had decided. */
-export type Outcome = 'pass' | 'no' | Cause | 'unasked';
+/** An item under decision-only: the decision model's pass or standing no, `held` when a CONFIDENT_ONLY check's item was unsure, an escalation (unanswered) by cause, or `unasked` once its check had decided. */
+export type Outcome = 'pass' | 'no' | 'held' | Cause | 'unasked';
 
 /** The api a decision-only round judges on, and what it heard: decision-model probabilities and escalated items, by unit and check key; `down` gives the units of requests never answered. */
 export type DecisionOnly = { api: ToolExecutionApi; probabilities: Map<string, number>; escalated: Set<string>; down: () => Set<string>; refused: () => Set<string> };
@@ -98,7 +98,9 @@ function outcomeOf(s: DecisionOnly, unit: string, key: string, d: CheckDecl | un
     return passOnly && 1 - p >= act ? 'pass-only-no' : 'unsure';
   }
   if (p === undefined) return 'unasked';
-  return p >= act ? 'pass' : 1 - p >= act && !passOnly ? 'no' : 'unasked';
+  if (p >= act) return 'pass';
+  if (1 - p >= act && !passOnly) return 'no';
+  return d?.decisionModel === CONFIDENT_ONLY ? 'held' : 'unasked';
 }
 
 /** Each item of one check (by its criterion.check key) the round heard of, by unit id. */

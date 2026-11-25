@@ -280,16 +280,16 @@ test('read_source pages a stored 100k source to its end, names the offset on tru
 
 const sees = (seen: string[], n: number) => JSON.parse(seen[n]).content[0].text as string;
 
-test('a batch of URLs runs together, reports each on its own, and ids follow input order', async () => {
+test('a batch of URLs runs together, reports each on its own, ids follow input order, and a redirected fetch records the URL it asked for', async () => {
   const base = await web();
   const { seen, session } = await run({}, (step) => [
-    call('web_fetch', { urls: [`${base}/paper.pdf`, `${base}/nope`, `${base}/page`] }),
+    call('web_fetch', { urls: [`${base}/paper.pdf`, `${base}/nope`, `${base}/page`, `${base}/samehop`] }),
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk });
   const out = sees(seen, 0);
   assert.match(out, /^\[s1\] .*paper\.pdf\n\nMallards migrate\n\n---\n\n.*answered 404\n\n---\n\n\[s2\] .*\/page\n\nDucks/);
   const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
-  assert.deepEqual(sources.map((s) => s.id), ['s1', 's2']);
+  assert.deepEqual(sources.map((s) => [s.id, s.url, s.asked]), [['s1', `${base}/paper.pdf`, undefined], ['s2', `${base}/page`, undefined], ['s3', `${base}/page`, `${base}/samehop`]]);
   await session.close();
 });
 

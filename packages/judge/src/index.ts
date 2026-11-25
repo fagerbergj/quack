@@ -9,7 +9,7 @@ import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
 import { feedback, score, type Check, type CheckResult, type Deferred, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
-export { buildEvidence, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type Where } from './declaration.ts';
+export { buildEvidence, CONFIDENT_ONLY, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type Where } from './declaration.ts';
 export { registerSelector, registerSplitter } from './library.ts';
 export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './resolve.ts';
 export { limiter } from './limit.ts';

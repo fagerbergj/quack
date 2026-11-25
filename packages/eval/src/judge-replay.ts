@@ -311,6 +311,7 @@ export type Expect = Record<string, Record<string, { flag: boolean }>>;
 function labelOf(flag: boolean, o: Outcome | undefined): string {
   if (o === undefined || o === 'unasked') return 'unjudged';
   if (o === 'pass') return flag ? 'passed-by-clef' : 'false-flag-cleared';
+  if (o === 'held') return flag ? 'held-unsure' : 'false-flag-cleared';
   return flag ? 'caught' : 'flagged';
 }
 
