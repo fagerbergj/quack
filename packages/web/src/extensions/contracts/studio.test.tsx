@@ -129,6 +129,7 @@ test('the status line says what is going on and whether anything waits on you, i
   expect(at({ status: 'proposed', proposal: proposal(2, 2) as Approval })).toEqual({ can: true, title: 'v2 waits on you', sub: 'Checks passed' });
   expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), approving: true } })).toEqual({ can: false, title: 'Checking v2', sub: 'Running the model checks on your approve' });
   expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), checks: held } })).toEqual({ can: true, title: 'v2 waits on you', sub: 'Model checks failed' });
+  expect(at({ status: 'proposed', proposal: { ...proposal(2, 2), checks: { ...held, decided: false, detail: null } } }).sub).toBe("Couldn't run the checks");
   expect(at({ status: 'changes_requested', running: true })).toEqual({ can: false, title: 'Changes asked for v2', sub: 'Asked by someone · the agent is revising it · nothing waits on you', detail: undefined });
   expect(at({ status: 'approved', isApproved: true })).toEqual({ can: false, done: true, title: 'v2 is approved', sub: 'Nothing in progress · nothing waits on you' });
   expect(at({ status: 'approved', isApproved: true, running: true }).sub).toBe('The agent is working · nothing waits on you');
@@ -222,6 +223,28 @@ test('failed model checks lead the approve sheet, failing items first; Approve a
   await userEvent.click(within(s).getByRole('button', { name: 'Send to the agent' }));
   expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'reject', reason: held.feedback[0] } }]]);
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve v2?' })).toBeNull());
+});
+
+test("checks no model answered read Couldn't run the checks, with the reason as its description; Try again approves plainly, Approve anyway gives a reason", async () => {
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  const why = 'The decision model or the judge model gave no usable answer for matches_intent.meets_intent, so these checks did not run.';
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [{ ...proposal(2, 2), checks: { at: 30, passed: false, decided: false, feedback: [why], detail: null } }]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  const link = within(bar()).getByRole('button', { name: "Couldn't run the checks" });
+  expect(link).toHaveAccessibleDescription(why);
+  expect(within(bar()).queryByText('Model checks failed')).toBeNull();
+  await userEvent.click(link);
+  const s = sheet('Approve v2?');
+  expect(within(s).getByRole('heading', { name: "Couldn't run the checks" })).toBeInTheDocument();
+  expect(s).toHaveTextContent(why);
+  expect(within(s).queryByRole('button', { name: 'Send to the agent' }), 'no findings to send').toBeNull();
+  await userEvent.click(within(s).getByRole('button', { name: 'Try again' }));
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
+  expect(within(bar()).getByRole('button', { name: 'Approve' }), 'a retry stays shown while the checks run again').toBeInTheDocument();
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve anyway' }));
+  expect(posts().at(-1)).toEqual([`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve', reason: 'Approved without the model checks' } }]);
 });
 
 test('Approve anyway records the approve over the findings, with that as its reason', async () => {

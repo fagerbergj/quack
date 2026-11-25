@@ -92,8 +92,8 @@ export function useDecide(sessionKey: string, proposal: Approval | undefined, de
     setError('');
     try {
       if (await decideApproval(sessionKey, proposal.id, decision, reason)) {
-        // A first approve stays shown: the model checks run on it, and a failure brings it back with their findings.
-        if (decision === 'reject' || proposal.checks) decided(proposal.id);
+        // An approve the model checks run on stays shown: a failure brings it back with their findings.
+        if (decision === 'reject' || (proposal.checks && (!unchecked(proposal.checks) || reason))) decided(proposal.id);
         return true;
       }
       setError('This version was already decided, in another tab or by a message you sent. The page shows where it stands now.');
@@ -135,16 +135,25 @@ const linesOf = (p: Pending) => (p.items.length
   ? p.items.map((i) => ({ key: i.ptr + i.line, breaking: i.breaking, text: i.line }))
   : (p.spec.changes ?? []).map((c) => ({ key: c.choice, breaking: false, text: lede(c.now) || c.choice })));
 
-const ANYWAY = "Approved over the model checks' findings";
+/** Whether the model checks an approve ran could not run at all: no model answered, so they decided nothing. */
+export const unchecked = (c: ApprovalChecks) => c.decided === false;
 
-// The model checks a first approve ran and failed, failing items first; a gate that is not the judge's gives its text alone.
+// The model checks a first approve ran and failed, failing items first, or why they could not run; a gate that is not the judge's gives its text alone.
 function Findings({ checks }: { checks: ApprovalChecks }) {
+  const text = <p className={`m-0 text-[13px] whitespace-pre-line ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{checks.feedback.join('\n')}</p>;
   return (
-    <section className="flex flex-col">
-      <h3 className={h3}>Model checks</h3>
-      {checks.detail ? <CheckResult verdict={checks.detail} open summary="Model checks failed" /> : <p className="m-0 text-[13px] whitespace-pre-line text-danger">{checks.feedback.join('\n')}</p>}
+    <section className="flex flex-col gap-1">
+      <h3 className={h3}>{unchecked(checks) ? "Couldn't run the checks" : 'Model checks'}</h3>
+      {checks.detail && !unchecked(checks) ? <CheckResult verdict={checks.detail} open summary="Model checks failed" /> : text}
     </section>
   );
+}
+
+// Over failed findings: send them to the agent, or approve anyway. Over checks that could not run: try again, or approve anyway with that as the reason.
+function heldActions(checks: ApprovalChecks, busy: string | undefined, act: (d: 'approve' | 'reject', reason?: string) => void) {
+  const anyway = (reason: string, cls: string) => <button type="button" disabled={!!busy} onClick={() => act('approve', reason)} className={cls}>{busy === 'approve' ? 'Approving…' : 'Approve anyway'}</button>;
+  if (unchecked(checks)) return <>{anyway('Approved without the model checks', sec)}<button type="button" disabled={!!busy} onClick={() => act('approve')} title="Run the model checks again" className={prim}>Try again</button></>;
+  return <><button type="button" disabled={!!busy} onClick={() => act('reject', checks.feedback.join('\n'))} title="The agent revises against the findings" className={sec}>{busy === 'reject' ? 'Sending…' : 'Send to the agent'}</button>{anyway("Approved over the model checks' findings", prim)}</>;
 }
 
 /** The confirmation before approving: one line per change, the breaks with their callers, and the judge's checks. Once the model checks
@@ -153,9 +162,8 @@ export function ApproveSheet({ pending, busy, error, decide, onClose }: { pendin
   const { spec, verdict, found, base, name, checks } = pending;
   const lines = linesOf(pending);
   const act = (decision: 'approve' | 'reject', reason?: string) => void decide(decision, reason).then((ok) => ok && onClose());
-  const approve = <button type="button" disabled={!!busy} onClick={() => act('approve', checks && ANYWAY)} className={prim}>{busy === 'approve' ? 'Approving…' : checks ? 'Approve anyway' : `Approve ${name}`}</button>;
-  const send = checks && <button type="button" disabled={!!busy} onClick={() => act('reject', checks.feedback.join('\n'))} title="The agent revises against the findings" className={sec}>{busy === 'reject' ? 'Sending…' : 'Send to the agent'}</button>;
-  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button>{send}{approve}</>;
+  const approve = <button type="button" disabled={!!busy} onClick={() => act('approve')} className={prim}>{busy === 'approve' ? 'Approving…' : `Approve ${name}`}</button>;
+  const actions = <><button type="button" onClick={onClose} className={sec}>Not yet</button>{checks ? heldActions(checks, busy, act) : approve}</>;
   return (
     <Sheet title={`Approve ${name}?`} onClose={onClose} actions={actions}>
       {checks && <Findings checks={checks} />}

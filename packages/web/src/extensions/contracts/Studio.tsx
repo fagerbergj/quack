@@ -6,7 +6,7 @@ import { SessionKeyContext, type Stand, type StudioProps } from '../../extension
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, iconButton, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
-import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
+import { ApproveSheet, AskSheet, prim, sec, unchecked, useDecide, type Break, type Pending } from './Approval.tsx';
 import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
 import { reasonText } from './comments.ts';
 import { Decided, Progress } from './Progress.tsx';
@@ -81,7 +81,8 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
     return { can: false, title: `Changes asked for ${name}`, sub: `Asked by ${who}${running ? ' · the agent is revising it' : ''} · nothing waits on you`, detail: rejection?.reason && reasonText(rejection.reason).split('\n').filter(Boolean).slice(0, 2).join('\n') };
   }
   if (s.proposal?.approving) return { can: false, title: `Checking ${name}`, sub: 'Running the model checks on your approve' };
-  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: s.proposal.checks ? 'Model checks failed' : 'Checks passed' };
+  const held = s.proposal?.checks;
+  if (s.proposal) return { can: true, title: `${name} waits on you`, sub: !held ? 'Checks passed' : unchecked(held) ? "Couldn't run the checks" : 'Model checks failed' };
   return waiting(s);
 }
 
@@ -110,25 +111,45 @@ function useItems(diff: Diff | undefined, spec: ContractSpec | undefined, found:
   return useMemo(() => (diff && spec ? changeItems(diff, spec, found) : []), [diff, spec, found]);
 }
 
+const link = 'min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap underline-offset-2 hover:underline focus-ring';
+
+// What the model checks an approve ran said, on a row of its own: in the title's column a phone's buttons squeeze it under the bar's edge.
+function HeldLine({ checks, label, onOpen }: { checks: NonNullable<Pending['checks']>; label: string; onOpen: () => void }) {
+  const why = unchecked(checks) ? checks.feedback.join(' ') : 'The model checks your approve ran found problems';
+  return <button type="button" onClick={onOpen} title={why} aria-description={why} className={`${link} ${unchecked(checks) ? 'text-warning' : 'text-danger'}`}>{label}</button>;
+}
+
+// Review, with draft comments in hand, else Ask for changes.
+function AskButton({ onAsk }: { onAsk: () => void }) {
+  const { drafts, open } = useComments();
+  if (drafts.length) return <button type="button" onClick={() => open({ kind: 'review' })} className={sec}>Review · {drafts.length}</button>;
+  return <button type="button" onClick={onAsk} className={sec}>Ask for changes</button>;
+}
+
+// What is going on, and beneath it the checks that passed (opening them) or whether anything waits on the person.
+function StatusLine({ title, sub, onChecks }: { title: string; sub?: string; onChecks?: () => void }) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <p role="status" className="m-0 text-[15px] leading-snug font-semibold text-ink [overflow-wrap:anywhere]">{title}</p>
+      {onChecks ? <button type="button" onClick={onChecks} className={`${link} text-link`}>Checks passed</button> : sub && <p className="m-0 text-[13px] text-muted">{sub}</p>}
+    </div>
+  );
+}
+
 /** The status line and, when the newest version waits on the person, Approve and Ask for changes (Review, with draft comments in hand); pinned to the bottom of the pane. */
 function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: { sessionKey: string; state: State; proposal?: Approval; decided: (id: string) => void; pending: Pending; stale?: string }) {
   const [sheet, setSheet] = useState<'approve' | 'ask' | 'checks'>();
   const deciding = { ...useDecide(sessionKey, proposal, decided), onClose: () => setSheet(undefined) };
-  const { drafts, open } = useComments();
-  const checks = state.can && pending.verdict;
-  const link = 'min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap underline-offset-2 hover:underline focus-ring';
-  const ask = drafts.length ? <button type="button" onClick={() => open({ kind: 'review' })} className={sec}>Review · {drafts.length}</button> : <button type="button" onClick={() => setSheet('ask')} className={sec}>Ask for changes</button>;
+  const held = state.can ? pending.checks : undefined;
+  const checks = state.can && !held && pending.verdict;
+  const ask = <AskButton onAsk={() => setSheet('ask')} />;
   return (
     <section aria-label="Approval" className="sticky bottom-0 z-10 -mx-4 mt-auto flex flex-col gap-1 border-t border-line bg-canvas/95 px-4 pt-2.5 pb-[max(0.625rem,var(--safe-b))] backdrop-blur sm:-mx-5 sm:px-5">
       <div className="flex items-center gap-2">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <p role="status" className="m-0 text-[15px] leading-snug font-semibold text-ink [overflow-wrap:anywhere]">{state.title}</p>
-          {state.can && pending.checks ? <button type="button" onClick={() => setSheet('approve')} title="The model checks your approve ran found problems" className={`${link} text-danger`}>Model checks failed</button>
-            : checks ? <button type="button" onClick={() => setSheet('checks')} className={`${link} text-link`}>Checks passed</button>
-            : state.sub && <p className="m-0 text-[13px] text-muted">{state.sub}</p>}
-        </div>
+        <StatusLine title={state.title} sub={held ? undefined : state.sub} onChecks={checks ? () => setSheet('checks') : undefined} />
         {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
       </div>
+      {held && <HeldLine checks={held} label={state.sub!} onOpen={() => setSheet('approve')} />}
       {state.can && <DraftsLine />}
       <StrandedLine />
       {state.detail && <p className="m-0 max-h-24 overflow-y-auto text-[13px] whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">{state.detail}</p>}

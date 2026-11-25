@@ -357,9 +357,10 @@ export type Outcome = { deny: string } | { undecided: string } | { verdict: Verd
 
 const shownIn = (api: ToolExecutionApi, ctx: Context, setTimer: SetTimer): Report | undefined => (typeof api.details === 'function' ? { send: (p: Progress) => api.details(p, ctx), setTimer } : undefined);
 
-/** Judges a sealed version on a person's approve, every check included; the approval records the verdict, so nothing is attached. */
-export function checkApproval(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, setTimer = wallTimer): Promise<Verdict> {
-  return judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}:approval`, shownIn(api, ctx, setTimer), 'approval');
+/** Judges a sealed version on a person's approve, every check included; the approval records the verdict, so nothing is attached.
+ * `approvedAt` keys the round's memo, so a rerun after a crash reuses its answers and a later approve asks again. */
+export function checkApproval(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, approvedAt: number, setTimer = wallTimer): Promise<Verdict> {
+  return judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}:approval:${approvedAt}`, shownIn(api, ctx, setTimer), 'approval');
 }
 
 /** Judges a sealed version once: a version that carries a verdict keeps it, from any run. `setTimer` is the progress throttle's test seam. */

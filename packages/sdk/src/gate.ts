@@ -25,7 +25,8 @@ export type Approval = {
   subject?: { kind: string; version: number } | null;
   /** A person's approve the gates are still checking; it becomes the verdict once they pass. */
   approving?: Verdict | null;
-  /** What the gates found on the last approve; failed ones leave the approval open, and the next approve is recorded over them. */
+  /** What the gates found on the last approve; failed ones leave the approval open, and the next approve is recorded over their findings.
+   * Undecided ones (a gate could not run its checks) are run again by the next approve, unless it gives a reason, which records it over them. */
   checks?: ApprovalChecks | null;
 };
 
@@ -180,14 +181,15 @@ export async function pendingApprovals(conversation: Conversation, ctx: Context)
 }
 
 // Records a verdict; returns false when the approval is unknown, already decided or withdrawn, or an approve of it is being checked.
-// An approve of a subject waits for the gates, unless they already failed it: the person then approves over their findings.
+// An approve of a subject waits for the gates, unless they already failed it, or could not run and the person says why they approve anyway.
 export async function resolveApproval(conversation: Conversation, id: string, verdict: { decision: Verdict['decision']; reason?: string; by: Principal }, ctx: Context): Promise<boolean> {
   return conversation.commit(async (tx) => {
     const doc = await tx.doc(Approvals, conversation.id);
     const item = doc.items[id];
     if (!item || item.verdict || item.withdrawn) return false;
     const v: Verdict = { decision: verdict.decision, reason: verdict.reason ?? null, by: verdict.by, at: Date.now() };
-    if (verdict.decision === 'reject' || !item.subject || item.checks) item.verdict = v;
+    const over = item.checks && (item.checks.decided !== false || !!verdict.reason);
+    if (verdict.decision === 'reject' || !item.subject || over) item.verdict = v;
     else if (item.approving) return false;
     else item.approving = v;
     return true;

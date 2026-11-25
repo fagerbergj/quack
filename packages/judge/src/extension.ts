@@ -99,10 +99,10 @@ async function approvalVerdict(api: ToolExecutionApi, ctx: Context, config: Judg
   if (!s || !how || !hasApprovalChecks(how.rubric)) return undefined;
   const sealed = await sealedVersion(api, s.kind, s.version, ctx);
   if (!sealed) return { kind: 'deny', reason: `${s.kind} v${s.version} is not sealed, so its checks cannot run` };
-  const v = await checkApproval(api, optionsFor(s.kind, how, config), sealed, ctx);
+  const v = await checkApproval(api, optionsFor(s.kind, how, config), sealed, ctx, approval.approving?.at ?? 0);
   const detail = v as unknown as JsonValue;
-  // An undecided check is not a pass: the person sees which ones no model answered and decides.
-  if (v.undecided.length) return { kind: 'continue', feedback: `The decision model or the judge model gave no usable answer for ${v.undecided.join(', ')}, so these checks did not run.`, detail };
+  // An undecided check (an outage, or an item no model answered) is neither a pass nor a finding: the next approve asks again.
+  if (v.undecided.length) return { kind: 'deny', reason: `The decision model or the judge model gave no usable answer for ${v.undecided.join(', ')}, so these checks did not run.` };
   return v.passed ? { kind: 'pass', detail } : { kind: 'continue', feedback: report(sealed, v, toolOf(s.kind) ?? 'the judge'), detail };
 }
 

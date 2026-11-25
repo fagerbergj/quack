@@ -9,7 +9,7 @@ import { onWaiting, waitingNow } from './signals.ts';
 export type GatePoint = 'tool.call.before' | 'generation.before' | 'turn.ended' | 'artifact.sealed' | 'approval.approving';
 
 /** Pass (its note is shown to whoever sealed), deny (the call fails and the run ends), or continue (the call fails with the feedback to act on).
- * At approval.approving, deny and continue both hold the approval open with their text; `detail` is what the approval keeps of the gate's result. */
+ * At approval.approving, continue reopens the approval with findings, deny as undecided (a plain approve reruns); `detail` is kept on it. */
 export type GateVerdict = { kind: 'pass'; note?: string; detail?: JsonValue } | { kind: 'deny'; reason: string } | { kind: 'continue'; feedback: string; detail?: JsonValue };
 
 /** What each wired point's event carries: the sealed version, or the approval a person just approved, before their verdict is recorded. */
@@ -91,18 +91,21 @@ export async function runSealGates(api: ToolExecutionApi, sealed: SealedArtifact
   return notes;
 }
 
-/** What the approval.approving chain found on a person's approve: passed unless a gate denied or continued, their texts, and the first gate's detail. */
-export type ApprovalChecks = { at: number; passed: boolean; feedback: string[]; detail: JsonValue | null };
+/** What the approval.approving chain found on a person's approve: passed unless a gate denied or continued, `decided` unless one denied
+ * (it could not run its checks), their texts, and the first gate's detail. */
+export type ApprovalChecks = { at: number; passed: boolean; decided: boolean; feedback: string[]; detail: JsonValue | null };
 
 /** Runs every approval.approving gate on approval `id`, in order; the approval records the result, so nothing here is memoized. */
 export async function runApprovalGates(api: ToolExecutionApi, id: string, approval: Approval, ctx: Context): Promise<ApprovalChecks> {
   const event: GateEvent<'approval.approving'> = { id: `approval:${id}`, at: api.now(), type: 'approval.approving', data: { id, approval } };
   const feedback: string[] = [];
   let detail: JsonValue | null = null;
+  let decided = true;
   for (const g of gates.filter((x) => x.point === 'approval.approving')) {
     const v = (await bounded(g.run(event as never, { api, ctx, now: () => api.now() }), g.timeoutMs)) ?? { kind: 'pass' };
     if (v.kind !== 'pass') feedback.push(v.kind === 'deny' ? v.reason : v.feedback);
     if (v.kind !== 'deny' && v.detail !== undefined) detail ??= v.detail;
+    decided &&= v.kind !== 'deny';
   }
-  return { at: api.now(), passed: !feedback.length, feedback, detail };
+  return { at: api.now(), passed: !feedback.length, decided, feedback, detail };
 }

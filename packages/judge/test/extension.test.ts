@@ -125,14 +125,18 @@ async function untilApprovals<T>(s: Session, pick: (items: Record<string, Approv
   }).finally(() => watch.stop());
 }
 
+// A note kind whose politeness check runs only on approve, and a gated tool that publishes the sealed version 1.
+const polite = { ...sayOk, criteria: [...sayOk.criteria, { id: 'manner', checks: [{ id: 'polite', label: 'Is not polite', weight: 1, when: 'approval' as const }] }] };
+const onApprove: Judged = {
+  rubric: polite, inputs: async () => ({ intro: 'Hello there.' }),
+  declaration: { scopes: { intro: { split: { name: 'whole', from: 'intro' } } }, checks: { polite: { scope: 'intro', question: { type: 'bool', instructions: 'Is it polite?' }, aggregate: { name: 'all' } } } },
+};
+const publish = gated(defineTool({ name: 'publish_note', description: 'Publish the note', parameters: obj({}, { open: true }), async execute() { return { output: [{ type: 'text', text: 'published' }] }; } }) as ToolRegistration, { subject: () => ({ kind: note.kind, version: 1 }) });
+const publishing = [defineExtension({ name: 'publish', tools: [publish] })];
+const jf = { kind: 'person', name: 'jf' } as const;
+const askToPublish = (approver: (s: Session) => Promise<void>) => async (s: Session) => (void approver(s), fauxAssistantMessage(fauxToolCall('publish_note', {}), { stopReason: 'toolUse' }));
+
 test("a check declared for approval skips every seal and runs on a person's approve of the version, for any kind with a gated tool", async () => {
-  const polite = { ...sayOk, criteria: [...sayOk.criteria, { id: 'manner', checks: [{ id: 'polite', label: 'Is not polite', weight: 1, when: 'approval' as const }] }] };
-  const judging: Judged = {
-    rubric: polite, inputs: async () => ({ intro: 'Hello there.' }),
-    declaration: { scopes: { intro: { split: { name: 'whole', from: 'intro' } } }, checks: { polite: { scope: 'intro', question: { type: 'bool', instructions: 'Is it polite?' }, aggregate: { name: 'all' } } } },
-  };
-  const publish = gated(defineTool({ name: 'publish_note', description: 'Publish the note', parameters: obj({}, { open: true }), async execute() { return { output: [{ type: 'text', text: 'published' }] }; } }) as ToolRegistration, { subject: () => ({ kind: note.kind, version: 1 }) });
-  const jf = { kind: 'person', name: 'jf' } as const;
   let held: Approval['checks'];
   // The person approves, reads the findings the gate held it open with, and approves again over them.
   const approver = async (s: Session) => {
@@ -141,10 +145,9 @@ test("a check declared for approval skips every seal and runs on a person's appr
     held = await untilApprovals(s, (items) => items[id].checks ?? undefined);
     await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
   };
-  const ask = async (s: Session) => (void approver(s), fauxAssistantMessage(fauxToolCall('publish_note', {}), { stopReason: 'toolUse' }));
   const rude = fauxAssistantMessage('{"choice": "no", "confidence": 0.9, "reason": "no greeting"}');
   // The judge model is the agent's own: asked once, on the approve, never at the seal.
-  const r = await run('on-approve', { maxRevisions: 1 }, [write('ok'), submit, ask, rude, done], undefined, undefined, judging, [defineExtension({ name: 'publish', tools: [publish] })]);
+  const r = await run('on-approve', { maxRevisions: 1 }, [write('ok'), submit, askToPublish(approver), rude, done], undefined, undefined, onApprove, publishing);
   const draft = r.versions[0].verdict as { passed: boolean; checks: Array<{ id: string; met: unknown; deferred?: string }> };
   assert.deepEqual([draft.passed, draft.checks.map((c) => [c.id, c.met, c.deferred])], [true, [['says_ok', 1, undefined], ['polite', null, 'approval']]]);
   assert.match(r.seen[2], /manner\.polite not run yet, they run when a person approves\), passed\./);
@@ -152,6 +155,27 @@ test("a check declared for approval skips every seal and runs on a person's appr
   assert.deepEqual([held?.passed, detail.passed, detail.checks.find((c) => c.id === 'polite')?.met], [false, false, false]);
   assert.match(held!.feedback.join(''), /missed manner\.polite: intro: no greeting/);
   assert.match(r.seen[4], /published/);
+  assert.equal(r.answer, 'Done.');
+});
+
+test('when no model answers on approve, the checks are undecided, not failed, and the next plain approve runs them again', async () => {
+  let first: Approval['checks'];
+  let second: Approval['checks'];
+  const approver = async (s: Session) => {
+    const id = await untilApprovals(s, (items) => Object.keys(items)[0]);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+    first = await untilApprovals(s, (items) => items[id].checks ?? undefined);
+    await resolveApproval(s.root, id, { decision: 'approve', by: jf }, BACKGROUND_CONTEXT);
+    second = await untilApprovals(s, (items) => (items[id].verdict ? items[id].checks ?? undefined : undefined));
+  };
+  // The judge model's first answer is unusable, so the item stays undecided; asked again on the retry, it answers.
+  const garbled = fauxAssistantMessage('the model is overloaded');
+  const polite = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason": "greets"}');
+  const r = await run('on-approve-retry', { maxRevisions: 1 }, [write('ok'), submit, askToPublish(approver), garbled, polite, done], undefined, undefined, onApprove, publishing);
+  assert.deepEqual([first?.passed, first?.decided, first?.detail], [false, false, null]);
+  assert.match(first!.feedback.join(''), /gave no usable answer for manner\.polite/);
+  assert.deepEqual([second?.passed, second?.decided], [true, true], 'the retry ran the checks and they passed');
+  assert.match(r.seen[5], /published/);
   assert.equal(r.answer, 'Done.');
 });
 
