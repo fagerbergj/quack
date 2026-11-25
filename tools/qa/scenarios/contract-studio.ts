@@ -10,10 +10,12 @@ const text = (m?: { content?: unknown }) => (typeof m?.content === 'string' ? m.
 const no = { choice: 'no', confidence: 1, reason: 'No field, status code or schema rule in the document carries it.' };
 // Until then the checks' answers are held back, so the steps can watch an approve being checked.
 let holdUntil = 0;
-// The model checks an approve runs fail every guarantee ("Decision:" prompts); any other turn just answers.
+// The model checks an approve runs fail every guarantee, single ("Decision:") or batched ("Evidence:"); any other turn just answers.
 const script: FakeScript = ({ messages = [] }) => {
   const asked = text(messages.at(-1));
-  if (asked.startsWith('Decision:')) return { content: JSON.stringify(no), delayMs: Math.max(0, holdUntil - Date.now()) };
+  const delayMs = Math.max(0, holdUntil - Date.now());
+  if (asked.startsWith('Decision:')) return { content: JSON.stringify(no), delayMs };
+  if (asked.startsWith('Evidence:')) return { content: JSON.stringify(Object.fromEntries([...asked.matchAll(/^- (q\d+):/gm)].map(([, id]) => [id, no]))), delayMs };
   return { content: 'Noted.' };
 };
 

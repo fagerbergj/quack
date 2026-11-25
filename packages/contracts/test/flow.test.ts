@@ -28,16 +28,17 @@ const refIn = (c: Msgs) => /ref "([^"]+)"/.exec(text(c))?.[1] ?? assert.fail(`no
 const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: 'artifacts/spec.json', content: JSON.stringify(spec(), null, 2) })(c);
 const jf = { kind: 'person', name: 'jf' } as const;
 
-// A stub model: judge questions ("Decision: ...") get `judge.says` ("yes" unless a test sets it), except the pitfall
+// A stub model: judge questions ("Decision: ..." or batched "Evidence: ...") get `judge.says` ("yes" unless a test sets it), except the pitfall
 // questions, and are counted in `judge.asked`; everything else follows the script in order. With `held` set, a judge answer waits for it,
 // and `asking` hears the first question that waits.
 const judge = { says: 'yes', asked: 0, held: undefined as Promise<void> | undefined, asking: undefined as (() => void) | undefined };
 const held = (reply: ReturnType<typeof judgeReply>) => (reply && judge.held ? (judge.asking?.(), judge.held.then(() => reply)) : reply);
 const judgeReply = (p: string) => {
   const answer = (q: string) => ({ choice: /implement the non-goal/.test(q) ? 'no' : judge.says, confidence: 1, reason: judge.says === 'yes' ? 'fine' : 'no field carries it' });
-  if (!p.startsWith('Decision:')) return undefined;
-  judge.asked++;
-  return fauxAssistantMessage(JSON.stringify(answer(p)));
+  if (/^(Decision|Evidence):/.test(p)) judge.asked++;
+  if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));
+  if (p.startsWith('Evidence:')) return fauxAssistantMessage(JSON.stringify(Object.fromEntries([...p.matchAll(/^- (q\d+): ([\s\S]*?)\n  Options:/gm)].map(([, id, q]) => [id, answer(q)]))));
+  return undefined;
 };
 async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>, reopen?: string) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });

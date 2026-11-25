@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
 import { CONFIDENT_ONLY, PASS_ONLY } from '../src/declaration.ts';
 import { limiter } from '../src/limit.ts';
-import { answerItems, decisionModelTokens, pack, PROMPT_VERSION, type DecisionModelRef } from '../src/resolve.ts';
+import { answerItems, batchKey, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, PROMPT_VERSION, type DecisionModelRef } from '../src/resolve.ts';
 import { reuseKey } from '../src/reuse.ts';
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
@@ -142,7 +143,7 @@ test('units that share context pack in order up to the cap; one without it goes 
   assert.ok(decisionModelTokens([items[0].unit, items[1].unit], checks) < one * 1.5, 'the shared context is counted once');
 });
 
-test('a packed request sends the context once and one question per unit; each unsure unit escalates alone with that context', async () => {
+test('a packed request sends the context once and one question per unit; its unsure units escalate together in one judge-model request', async () => {
   const shared = { intent: 'serve the page' };
   const units = ['u0', 'u1', 'u2', 'u3'].map((id) => ({ id, shared, state: { text: id } }));
   const sent: Array<{ state: unknown; questions: Record<string, { instructions: string }> }> = [];
@@ -155,9 +156,8 @@ test('a packed request sends the context once and one question per unit; each un
   Object.assign(api.models, {
     getModel: (provider: string, id: string) => ({ provider, id }),
     completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
-      const prompt = r.messages[0].content;
-      prompts.push(prompt);
-      return { stopReason: 'stop', content: [{ type: 'text', text: /"u1"/.test(prompt) ? '{"choice": "yes", "confidence": 0.9, "reason": "says so"}' : '{"choice": "no", "confidence": 0.8, "reason": "only asserts"}' }] };
+      prompts.push(r.messages[0].content);
+      return { stopReason: 'stop', content: [{ type: 'text', text: '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "says so"}, "q1": {"choice": "no", "confidence": 0.8, "reason": "only asserts"}}' }] };
     },
   });
   let active = 0;
@@ -177,13 +177,102 @@ test('a packed request sends the context once and one question per unit; each un
   assert.equal(sent[0].questions.q2.instructions, 'About items[2]: answer asks[0].');
   assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the decision model, which would read it as part of the question');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [['u0', true, 'clef', undefined], ['u1', true, 'j', 'says so'], ['u2', false, 'j', 'only asserts'], ['u3', false, 'clef', undefined]]);
-  assert.equal(prompts.length, 2, 'one judge-model request per unsure unit');
-  for (const p of prompts) assert.ok(p.startsWith('Decision: Does it say why?') && p.split('serve the page').length === 2, 'each carries the shared context once');
+  assert.equal(prompts.length, 1, 'one judge-model request for both unsure units');
+  assert.equal(prompts[0].split('serve the page').length, 2, 'the shared context is sent once');
+  assert.match(prompts[0], /- q0: About items\[0\] \(u1\): Does it say why\?\n  Options: yes, no\n- q1: About items\[1\] \(u2\)/);
   assert.equal(peak, 1, 'the escalation limit holds');
   assert.ok(api.memos.has('m:u0+4:classifier'), 'a packed request is memoized under its first unit and size');
 });
 
-test('a check with decisionModel false never reaches the decision model and is escalated like the group\'s other unsure questions', async () => {
+test('a question the packed reply leaves unanswered escalates on its own; a rerun reuses the packed reply', async () => {
+  const shared = { diff: 'd' };
+  const units = ['p0', 'p1'].map((id) => ({ id, shared, state: { promise: id } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: {} }));
+  let packedCalls = 0;
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const alone = r.messages[0].content.startsWith('Decision:');
+      packedCalls += alone ? 0 : 1;
+      return { stopReason: 'stop', content: [{ type: 'text', text: alone ? '{"choice": "no", "confidence": 0.9, "reason": "missing"}' : '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "in the diff"}}' }] };
+    },
+  });
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  for (let run = 0; run < 2; run++) {
+    const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+    assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.note]), [['p0', true, 'in the diff'], ['p1', false, 'missing']]);
+  }
+  assert.equal(packedCalls, 1);
+});
+
+test('eight unsure questions of one group go to the judge model as two requests of four, side by side', async () => {
+  const shared = { diff: 'd' };
+  const units = Array.from({ length: 8 }, (_, n) => ({ id: `p${n}`, shared, state: { part: `p${n}` } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: {} }));
+  const prompts: string[] = [];
+  let [active, peak] = [0, 0];
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      prompts.push(r.messages[0].content);
+      peak = Math.max(peak, ++active);
+      await new Promise((done) => setImmediate(done));
+      active--;
+      const ids = [...r.messages[0].content.matchAll(/^- (q\d+):/gm)].map((m) => m[1]);
+      return { stopReason: 'stop', content: [{ type: 'text', text: JSON.stringify(Object.fromEntries(ids.map((q) => [q, { choice: 'yes', confidence: 0.9, reason: 'kept' }]))) }] };
+    },
+  });
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(2) };
+  const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.deepEqual(prompts.map((p) => (p.match(/^- q\d+:/gm) ?? []).length), [MAX_BATCH_QUESTIONS, MAX_BATCH_QUESTIONS]);
+  assert.equal(peak, 2, 'the two sub-batches run in parallel within the escalation limit');
+  assert.ok(answered.every((a) => a.answer!.met === true && a.answer!.resolver === 'j'));
+});
+
+test('a batch over the judge model window splits into sub-batches that each fit; a question a reply leaves out escalates alone', async () => {
+  const shared = { intent: 'serve the page' };
+  const units = ['u0', 'u1', 'u2', 'u3'].map((id) => ({ id, shared, state: { text: id + 'x'.repeat(1000) } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(units.map((_, i) => [`c.says_why#${i}`, { type: 'bool', probability: 0.5 }])) }));
+  const prompts: string[] = [];
+  const window = 1400 - 400;
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id, contextWindow: 1400, maxTokens: 400 }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const text = r.messages[0].content;
+      if (text.startsWith('Decision:')) return { stopReason: 'stop', content: [{ type: 'text', text: '{"choice": "no", "confidence": 0.9, "reason": "alone"}' }] };
+      prompts.push(text);
+      // The second sub-batch's reply leaves out its second question.
+      const reply = prompts.length === 1 ? '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "a"}, "q1": {"choice": "yes", "confidence": 0.9, "reason": "b"}}' : '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "c"}}';
+      return { stopReason: 'stop', content: [{ type: 'text', text: reply }] };
+    },
+  });
+  let [active, peak] = [0, 0];
+  const one = limiter(1);
+  const escalations: typeof one = (task) => one(async () => {
+    peak = Math.max(peak, ++active);
+    try {
+      return await task();
+    } finally {
+      active--;
+    }
+  });
+  const answered = await answerItems(api as never, { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations }, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.equal(prompts.length, 2, 'two sub-batches, each its own request');
+  for (const p of prompts) {
+    assert.ok(p.length / 3 <= window, 'each sub-batch fits the window');
+    assert.equal(p.split('serve the page').length, 2, 'the shared context is sent once per sub-batch');
+  }
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.note]), [['u0', true, 'a'], ['u1', true, 'b'], ['u2', true, 'c'], ['u3', false, 'alone']]);
+  const key = (ids: string[]) => `m:escalation:${createHash('sha256').update(ids.map((id) => `${id}:c.says_why`).join('\n')).digest('hex').slice(0, 16)}`;
+  assert.ok(api.memos.has(key(['u0', 'u1'])) && api.memos.has(key(['u2', 'u3'])), 'each sub-batch is memoized under its own questions');
+  assert.deepEqual([...api.memos.keys()].filter((k) => k.startsWith('decision:m:')), ['decision:m:u3:c.says_why'], 'only the left-out question is asked alone');
+  assert.equal(peak, 1, 'a left-out question waits for its own slot');
+});
+
+test('a check with decisionModel false never reaches the decision model and is escalated with the group\'s other unsure questions', async () => {
   const shared = { ci: 'ci=success' };
   const units = ['f0', 'f1'].map((id) => ({ id, shared, state: { finding: id } }));
   const contra = { id: 'c.contradicted', question: { type: 'bool' as const, instructions: 'Does the code contradict it?', pass: ['no' as const] }, decisionModel: false as const };
@@ -197,16 +286,15 @@ test('a check with decisionModel false never reaches the decision model and is e
   Object.assign(api.models, {
     getModel: (provider: string, id: string) => ({ provider, id }),
     completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
-      const prompt = r.messages[0].content;
-      prompts.push(prompt);
-      const reply = !prompt.includes('contradict') ? { choice: 'yes', confidence: 0.9, reason: 'says so' } : /"f0"/.test(prompt) ? { choice: 'no', confidence: 0.9, reason: 'consistent' } : { choice: 'yes', confidence: 0.9, reason: 'line 47 gives 0' };
+      prompts.push(r.messages[0].content);
+      const reply = { q0: { choice: 'no', confidence: 0.9, reason: 'consistent' }, q1: { choice: 'yes', confidence: 0.9, reason: 'says so' }, q2: { choice: 'yes', confidence: 0.9, reason: 'line 47 gives 0' } };
       return { stopReason: 'stop', content: [{ type: 'text', text: JSON.stringify(reply) }] };
     },
   });
   const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
   const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [...checks, contra] })), BACKGROUND_CONTEXT);
   assert.deepEqual(sent.map((r) => Object.values(r.questions).map((q) => q.instructions)), [['About items[0]: answer asks[0].', 'About items[1]: answer asks[0].']]);
-  assert.equal(prompts.length, 3, 'both contradicted questions and the unsure says_why each go alone');
+  assert.equal(prompts.length, 1, 'both contradicted questions and the unsure says_why go in one judge-model request');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.check.id, a.answer!.met, a.answer!.resolver]), [
     ['f0', 'c.says_why', true, 'clef'], ['f0', 'c.contradicted', true, 'j'], ['f1', 'c.says_why', true, 'j'], ['f1', 'c.contradicted', false, 'j'],
   ]);
@@ -254,7 +342,7 @@ test('a pass-only check keeps a confident pass from the decision model; a confid
     ['u1', true, 'j', 'the judge says no'],
     ['u2', true, 'j', 'the judge says no'],
   ]);
-  assert.equal(seen.prompts.length, 2, 'one judge-model request per escalation');
+  assert.equal(seen.prompts.length, 1, 'the two escalations go in one judge-model request');
 });
 
 test('a confident fail stands on a check without the option and escalates on a pass-only one, asked of the same unit', async () => {
@@ -283,14 +371,14 @@ test('a confident-only check keeps the decision model\'s confident pass and fail
   assert.equal(seen.prompts.length, 0);
 });
 
-test('many confident fails on a pass-only check escalate one request each within the escalation limit', async () => {
+test('many confident fails on a pass-only check escalate in sub-batches within the escalation limit', async () => {
   const shared = { request: 'r' };
   const units = Array.from({ length: 9 }, (_, i) => ({ id: `u${i}`, shared, state: { report: `u${i}` } }));
   const { api, seen } = passOnlyApi(units.map(() => 0.01), 'yes');
   const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(2) };
   const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [contradicts] })), BACKGROUND_CONTEXT);
   assert.ok(answered.every((a) => a.answer!.resolver === 'j' && a.answer!.met === false));
-  assert.equal(seen.prompts.length, units.length);
+  assert.equal(seen.prompts.length, Math.ceil(units.length / MAX_BATCH_QUESTIONS));
   assert.ok(seen.peak <= 2, `at most two judge-model requests at once, saw ${seen.peak}`);
 });
 
@@ -319,34 +407,35 @@ test('a limiter runs at most n tasks at once and starts the next as one ends', a
   assert.equal(peak, 2);
 });
 
-test('a transient judge-model error is not memoized: a retry calls the judge model again', async () => {
+test('a transient askBatch error is not memoized: a retry calls the judge model again', async () => {
   const shared = { diff: 'd' };
   const units = ['p0', 'p1'].map((id) => ({ id, shared, state: { promise: id } }));
   const api = callApi(async () => ({ stopReason: 'stop', answers: {} }));
-  let calls = 0;
+  let batchCalls = 0;
   let fail = true;
   Object.assign(api, { now: () => 0, agent: async () => ({}) });
   Object.assign(api.models, {
     getModel: (provider: string, id: string) => ({ provider, id }),
-    completeSimple: async () => {
-      calls++;
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const alone = r.messages[0].content.startsWith('Decision:');
+      if (!alone) batchCalls++;
       if (fail) return { stopReason: 'error', errorMessage: '503 busy', content: [] };
-      return { stopReason: 'stop', content: [{ type: 'text', text: '{"choice": "yes", "confidence": 0.9, "reason": "ok"}' }] };
+      return { stopReason: 'stop', content: [{ type: 'text', text: '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "ok"}, "q1": {"choice": "yes", "confidence": 0.9, "reason": "ok"}}' }] };
     },
   });
   const retry = { sleep: async () => {}, random: () => 0, log: () => {} };
   const settings = { judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1), retry };
-  const keys = units.map((u) => `decision:m:${u.id}:c.says_why`);
+  const pending = units.map((unit, i) => ({ i, unit, check: checks[0] }));
+  const key = batchKey('m', pending);
 
   const first = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
-  assert.ok(keys.every((k) => !api.memos.has(k)), 'a transient outage is not memoized');
+  assert.equal(api.memos.has(key), false, 'a transient outage is not memoized');
   assert.ok(first.every((a) => a.answer!.met === null));
 
   fail = false;
-  const before = calls;
   const second = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
-  assert.equal(calls - before, 2, 'the retry asks the judge model again, once per item');
-  assert.ok(keys.every((k) => api.memos.has(k)));
+  assert.ok(batchCalls > 1, 'the retry calls the judge model again in a batch');
+  assert.equal(api.memos.has(key), true);
   assert.deepEqual(second.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver]), [['p0', true, 'j'], ['p1', true, 'j']]);
 });
 
@@ -402,7 +491,7 @@ test('the reuse key is computed as before; only the prompt version moved', () =>
   const policy = { decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } };
   // The key main computed at prompt version 1 for this item.
   assert.equal(reuseKey(ask, unit, policy, 1), 'c327464a2db21900b572b113a2bab98ff837f5b6a0c1bfd1bfac0632e7659528');
-  assert.equal(PROMPT_VERSION, 2);
+  assert.equal(PROMPT_VERSION, 3);
   assert.notEqual(reuseKey(ask, unit, policy), reuseKey(ask, unit, policy, 1));
 });
 
