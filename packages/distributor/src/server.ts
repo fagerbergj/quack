@@ -438,7 +438,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     const busy = live && (await ping(key).then((p) => p.status === 'HealthyBusy', () => true));
     const why = busy ? 'is running'
       : serving.has(key) ? 'is handling a request'
-      : outbox.pending(key) ? 'has messages waiting to be delivered'
       : !marked.has(key) && (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : ((await opts.catalog?.getSession(key))?.pendingAsks ?? 0) > 0 ? 'is waiting on a person' : undefined;
     if (why) return { refused: why };
@@ -447,10 +446,12 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     marked.delete(key);
     wakeFailures.delete(key);
     repicked.delete(key);
+    // Messages still waiting for the process go with the session; the page's delete dialog names how many.
+    const discarded = queued.discard(key);
     if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
     waits.delete(key);
-    console.log(`session ${key} deleted`);
+    console.log(`session ${key} deleted${discarded ? `, with ${discarded} queued messages` : ''}`);
     return 'deleted';
   }
 
@@ -564,15 +565,21 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     lastUse.set(key, now());
     return { url: `${url.replace(/^http/, 'ws')}/ws`, headers: upstream(key, who) };
   };
-  const queued = sessionOutbox({ outbox, open: started, setTimer, log: (line) => console.warn(line) });
+  // A session deleted meanwhile is not born again by a start for its queued messages.
+  const startExisting = async (key: string, who?: Principal) => {
+    await removing.get(key);
+    if ((await driver.agentOf(key)) === undefined) throw new AgentError(404, 'the session no longer exists');
+    return started(key, who);
+  };
+  const queued = sessionOutbox({ outbox, open: startExisting, setTimer, now, log: (line) => console.warn(line) });
   // Inputs a previous run of the distributor accepted but never delivered start their sessions now.
-  for (const key of outbox.keys()) queued.drain(key);
+  for (const key of outbox.keys()) queued.flush(key);
   // A running session's socket is spliced onto its own; any other, or one with inputs still queued here, opens at once on its store's frames.
   async function openPage(key: string, agent: string | undefined, who: Principal, req: IncomingMessage, socket: Duplex, head: Buffer) {
     const bound = await driver.agentOf(key);
     if (bound === undefined) throw new AgentError(404, 'no such session');
     if (agent && agent !== bound) throw new AgentError(409, `session runs agent ${bound}, not ${agent}`);
-    if (driver.running().includes(key) && !queued.pending(key)) {
+    if (driver.running().includes(key) && !queued.held(key)) {
       const { url, headers } = await started(key, who);
       return await proxyUpgrade(url, headers, req, '/ws', socket, head);
     }

@@ -49,12 +49,13 @@ export function RenameDialog({ current, save, onClose }: { current: string; save
   );
 }
 
-export function DeleteDialog({ name, remove, onClose, onDone }: { name: string; remove: () => Promise<unknown>; onClose: () => void; onDone: () => void }) {
+export function DeleteDialog({ name, queued = 0, remove, onClose, onDone }: { name: string; queued?: number; remove: () => Promise<unknown>; onClose: () => void; onDone: () => void }) {
   const { busy, error, go } = useAction(remove, onDone);
   return (
     <Modal title="Delete session?" onClose={onClose} onSubmit={go} action="Delete" danger busy={busy} error={error}>
       <p className="m-0 text-[14px] [overflow-wrap:anywhere]">
         <strong>{name}</strong> and its transcript, artifacts and workspace will be deleted for good.
+        {queued > 0 && ` ${queued === 1 ? 'Its queued message is' : `Its ${queued} queued messages are`} discarded unsent.`}
       </p>
     </Modal>
   );

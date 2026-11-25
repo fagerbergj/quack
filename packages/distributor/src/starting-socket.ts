@@ -3,21 +3,27 @@ import type { Principal } from '@quack/sdk';
 import { MAX_FRAME, parseClient, requestIdOf, unrefTimer, type SetTimer } from '@quack/session';
 import WebSocket, { WebSocketServer, type RawData } from 'ws';
 import type { Outbox, OutboxRow } from './outbox.ts';
+import { AgentError } from './process-driver.ts';
 
 const RETRY_MAX_MS = 30_000;
 const ANSWER_TIMEOUT_MS = 30_000;
+// Failed starts are retried this long before the rows are marked failed for the person to retry or discard.
+const GIVE_UP_MS = 30 * 60_000;
+// Reads and withdraws a page sends before its session answers; past this the oldest go, as a stale read is worth nothing.
+const EARLY_MAX = 32;
 // The id a page sees for an outbox row; the session's own queued rows carry its inbox ids.
 const ROW = 'queued:';
 
-type Queued = { id: string; text: string };
-type Answer = { type: 'accepted' | 'error'; error?: string };
+type Queued = { id: string; text: string; failed?: string };
+type Frame = { type?: string; requestId?: string; error?: string; status?: string; reason?: string; items?: unknown };
 type Page = { send(frame: object): void; queued(): void };
-/** Where a session's socket answers and the headers that open it for a principal; starts the process when it has none. */
+/** Where a session's socket answers and the headers that open it for a principal; starts the process when it has none.
+ * Rejects with AgentError 404 once the session is gone, and with another AgentError when it can never start. */
 export type OpenSession = (key: string, by?: Principal) => Promise<{ url: string; headers: Record<string, string> }>;
-export type OutboxDeps = { outbox: Outbox; open: OpenSession; setTimer?: SetTimer; log?: (line: string) => void };
+export type OutboxDeps = { outbox: Outbox; open: OpenSession; setTimer?: SetTimer; now?: () => number; log?: (line: string) => void };
 
 // A session's frame, or undefined for one that is not JSON: a sandboxed session must not be able to throw in the distributor.
-function parsed(data: RawData): { type?: string; requestId?: string; error?: string; items?: unknown } | undefined {
+function parsed(data: RawData): Frame | undefined {
   try {
     return JSON.parse(String(data)) ?? undefined;
   } catch {
@@ -25,8 +31,11 @@ function parsed(data: RawData): { type?: string; requestId?: string; error?: str
   }
 }
 
-// Only frames that start as an answer or a queued list are parsed, so a streaming run's view frames pass untouched.
+// A page's queued list is merged only on frames that start as one, so a streaming run's view frames pass unparsed. A session that
+// serialized `type` later would show its list without the outbox rows until they change; delivery parses every frame, so it cannot miss.
 const startsAs = (data: RawData, type: string) => Buffer.isBuffer(data) && data.subarray(0, type.length + 10).toString() === `{"type":"${type}"`;
+const clip = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 function opened(url: string, headers: Record<string, string>): Promise<WebSocket> {
   const ws = new WebSocket(url, { headers });
@@ -34,13 +43,13 @@ function opened(url: string, headers: Record<string, string>): Promise<WebSocket
 }
 
 // Sends one row and settles with the session's answer for its requestId; a close, a failed send or silence rejects, and the row stays queued.
-function answered(ws: WebSocket, row: OutboxRow, setTimer: SetTimer): Promise<Answer> {
+function answered(ws: WebSocket, row: OutboxRow, setTimer: SetTimer): Promise<Frame> {
   return new Promise((resolve, reject) => {
     const done = (settle: () => void) => { cancel(); ws.off('message', onMessage).off('close', onClose); settle(); };
     const fail = (why: string | Error) => done(() => reject(why instanceof Error ? why : new Error(why)));
     const onMessage = (data: RawData) => {
-      const frame = startsAs(data, 'accepted') || startsAs(data, 'error') ? parsed(data) : undefined;
-      if (frame?.requestId === row.requestId) done(() => resolve(frame as Answer));
+      const frame = parsed(data);
+      if (frame && frame.requestId === row.requestId && (frame.type === 'accepted' || frame.type === 'error')) done(() => resolve(frame));
     };
     const onClose = () => fail('the session process ended');
     const cancel = setTimer(() => fail('the session did not answer a queued message'), ANSWER_TIMEOUT_MS);
@@ -49,6 +58,9 @@ function answered(ws: WebSocket, row: OutboxRow, setTimer: SetTimer): Promise<An
   });
 }
 
+// Why the session did not take a delivered row: its refusal, or a declined or aborted submission; undefined when it took it.
+const refusal = (a: Frame) => (a.type === 'error' ? a.error ?? 'refused' : a.status === 'unanswered' ? a.reason ?? 'not answered' : undefined);
+
 /** Accepts page sockets for the distributor itself, under the session's own frame budget. */
 export const pageSockets = () => new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME, perMessageDeflate: { threshold: 1024 } });
 
@@ -56,29 +68,43 @@ export const pageSockets = () => new WebSocketServer({ noServer: true, maxPayloa
  * each once the session answered the one before. The session takes a re-sent requestId once, so a retry cannot double one. */
 export function sessionOutbox(d: OutboxDeps) {
   const setTimer = d.setTimer ?? unrefTimer;
+  const now = d.now ?? Date.now;
   const pages = new Map<string, Set<Page>>();
-  const draining = new Set<string>();
-  const failures = new Map<string, number>();
+  const flushing = new Set<string>();
+  const failures = new Map<string, { n: number; since: number }>();
   const inFlight = new Map<string, string>();
-  const rowsOf = (key: string): Queued[] => d.outbox.rows(key).map((r) => ({ id: ROW + r.requestId, text: r.text }));
+  const rowsOf = (key: string): Queued[] => d.outbox.rows(key).map((r) => ({ id: ROW + r.requestId, text: r.text, ...(r.failed !== undefined && { failed: r.failed }) }));
   const changed = (key: string) => pages.get(key)?.forEach((p) => p.queued());
+  const tell = (key: string, frame: object) => pages.get(key)?.forEach((p) => p.send(frame));
+  const next = (key: string) => d.outbox.rows(key).find((r) => r.failed === undefined);
 
-  function drain(key: string) {
-    if (draining.has(key)) return;
-    draining.add(key);
-    void deliver(key).then(() => failures.delete(key), (err) => retry(key, err)).finally(() => draining.delete(key));
+  /** Delivers the session's waiting rows unless a delivery is already running for it. */
+  function flush(key: string) {
+    if (flushing.has(key)) return;
+    flushing.add(key);
+    void deliver(key).then(() => failures.delete(key), (err) => retry(key, err)).finally(() => flushing.delete(key));
   }
 
+  // A session that is gone takes its rows with it; one that can never start, or has failed to for GIVE_UP_MS, leaves them failed.
   function retry(key: string, err: unknown) {
-    const n = (failures.get(key) ?? 0) + 1;
-    failures.set(key, n);
-    if (n === 1) d.log?.(`session ${key}: queued messages not delivered (${err instanceof Error ? err.message : String(err)}); retrying with backoff`);
-    setTimer(() => drain(key), Math.min(1000 * 2 ** (n - 1), RETRY_MAX_MS));
+    if (err instanceof AgentError && err.status === 404) return void discard(key);
+    const { n, since } = failures.get(key) ?? { n: 0, since: now() };
+    if (err instanceof AgentError || now() - since >= GIVE_UP_MS) return giveUp(key, messageOf(err));
+    failures.set(key, { n: n + 1, since });
+    if (n === 0) d.log?.(`session ${key}: queued messages not delivered (${messageOf(err)}); retrying with backoff`);
+    setTimer(() => flush(key), Math.min(1000 * 2 ** n, RETRY_MAX_MS));
+  }
+
+  function giveUp(key: string, reason: string) {
+    failures.delete(key);
+    d.outbox.fail(key, reason);
+    d.log?.(`session ${key}: gave up delivering queued messages: ${reason}`);
+    changed(key);
   }
 
   // One socket per run of rows from the same principal, since a socket's principal is fixed when it opens.
   async function deliver(key: string) {
-    for (let head = d.outbox.rows(key)[0]; head; head = d.outbox.rows(key)[0]) {
+    for (let head = next(key); head; head = next(key)) {
       const { url, headers } = await d.open(key, head.by);
       const ws = await opened(url, headers);
       try {
@@ -90,21 +116,31 @@ export function sessionOutbox(d: OutboxDeps) {
   }
 
   async function deliverAs(key: string, ws: WebSocket, by: string) {
-    for (let row = d.outbox.rows(key)[0]; row && JSON.stringify(row.by ?? null) === by; row = d.outbox.rows(key)[0]) {
+    for (let row = next(key); row && JSON.stringify(row.by ?? null) === by; row = next(key)) {
       inFlight.set(key, row.requestId);
       const answer = await answered(ws, row, setTimer).finally(() => inFlight.delete(key));
       d.outbox.remove(key, row.requestId);
-      if (answer.type === 'error') pages.get(key)?.forEach((p) => p.send({ type: 'error', error: answer.error }));
+      const refused = refusal(answer);
+      if (refused) tell(key, { type: 'error', error: `Couldn't send "${clip(row.text)}": ${refused}` });
       changed(key);
     }
   }
 
-  /** Serves a page socket on a session with no process, or with inputs still in the outbox: it opens on the session's recorded frames,
-   * queues inputs until the outbox is empty, starts the process, and relays both ways once it answers. A failed start is retried while the page stays. */
+  /** Discards a session's rows, as its delete does; answers how many there were. */
+  function discard(key: string) {
+    const n = d.outbox.clear(key);
+    failures.delete(key);
+    changed(key);
+    return n;
+  }
+
+  /** Serves a page socket on a session with no process, or with rows in the outbox: it opens on the session's recorded frames,
+   * queues inputs while rows wait, starts the process, and relays both ways once it answers. A failed start is retried while the page stays. */
   function serve(page: WebSocket, key: string, who: Principal | undefined, frames: object[]) {
     let session: WebSocket | undefined;
     let recorded: Queued[] = [];
     let failed = 0;
+    let dropped = false;
     let cancelRetry = () => {};
     // Reads and the session's own withdraws that arrive before it answers; they need no durability.
     const early: Array<[RawData, boolean]> = [];
@@ -125,15 +161,23 @@ export function sessionOutbox(d: OutboxDeps) {
       if (refused) return send({ type: 'error', error: refused, requestId: input.requestId });
       send({ type: 'accepted', requestId: input.requestId, queued: true });
       changed(key);
-      drain(key);
+      flush(key);
     }
 
-    // A row on its way cannot be taken back; one already delivered has left the outbox, so this page's list just catches up.
+    // Send now on a failed row retries it. A row on its way cannot be taken back; one already delivered has left the outbox, so the list catches up.
     function unqueue(kind: 'withdraw' | 'steer', requestId: string) {
+      if (kind === 'steer' && d.outbox.retry(key, requestId)) return void (changed(key), flush(key));
       if (kind === 'steer') return send({ type: 'error', error: 'Queued messages go to the session as soon as it starts.' });
       if (inFlight.get(key) === requestId) return send({ type: 'error', error: 'That message is already on its way to the session.' });
       if (d.outbox.remove(key, requestId)) return changed(key);
       self.queued();
+    }
+
+    function hold(data: RawData, binary: boolean) {
+      if (early.push([data, binary]) <= EARLY_MAX) return;
+      early.shift();
+      if (!dropped) send({ type: 'error', error: 'Earlier requests were dropped while the session starts.' });
+      dropped = true;
     }
 
     function fromPage(data: RawData, binary: boolean) {
@@ -143,20 +187,22 @@ export function sessionOutbox(d: OutboxDeps) {
       if (input.type === 'input') return queue(input);
       if ((input.type === 'withdraw' || input.type === 'steer') && input.id.startsWith(ROW)) return unqueue(input.type, input.id.slice(ROW.length));
       if (session) session.send(data, { binary });
-      else early.push([data, binary]);
+      else hold(data, binary);
     }
 
     function fromSession(data: RawData, binary: boolean) {
-      if (!d.outbox.pending(key) || !startsAs(data, 'queued')) return page.send(data, { binary });
+      if (!startsAs(data, 'queued') || !d.outbox.rows(key).length) return page.send(data, { binary });
       const items = parsed(data)?.items;
       recorded = Array.isArray(items) ? items : [];
       self.queued();
     }
 
+    // A session that is gone or can never start is not retried; the person sees why.
     function retryStart(err: unknown) {
       if (page.readyState !== page.OPEN) return;
+      if (err instanceof AgentError) return send({ type: 'error', error: `the session cannot start: ${err.message}` });
       const kept = d.outbox.pending(key) ? 'your queued messages are kept; ' : '';
-      send({ type: 'error', error: `the session did not start: ${err instanceof Error ? err.message : String(err)}; ${kept}retrying` });
+      send({ type: 'error', error: `the session did not start: ${messageOf(err)}; ${kept}retrying` });
       cancelRetry = setTimer(() => void connect(), Math.min(1000 * 2 ** failed++, RETRY_MAX_MS));
     }
 
@@ -183,5 +229,5 @@ export function sessionOutbox(d: OutboxDeps) {
     void connect();
   }
 
-  return { serve, drain, pending: (key: string) => d.outbox.pending(key) };
+  return { serve, flush, discard, held: (key: string) => d.outbox.rows(key).length > 0 };
 }

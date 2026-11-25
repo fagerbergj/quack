@@ -1734,6 +1734,20 @@ test('Delete asks first, names the session, and goes back to the list once confi
   expect(deletes()).toEqual(['sessions/ui%3Au1']);
 });
 
+test('a message the session could not be started for shows why, with Retry and Discard, and the delete dialog counts it', async () => {
+  withRow();
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.frame({ type: 'queued', items: [{ id: 'queued:r1', text: 'are you there', failed: 'no capacity' }] });
+  expect(screen.getByText("Couldn't send: no capacity")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(ws.sent.at(-1)).toEqual({ type: 'steer', id: 'queued:r1' });
+  await userEvent.click(screen.getByRole('button', { name: 'Discard message' }));
+  expect(ws.sent.at(-1)).toEqual({ type: 'withdraw', id: 'queued:r1' });
+  await menu('Delete');
+  expect(screen.getByRole('dialog', { name: 'Delete session?' })).toHaveTextContent('Its queued message is discarded unsent.');
+});
+
 test('a refused delete keeps the dialog open with the server reason', async () => {
   withRow();
   routes['DELETE /sessions/ui%3Au1'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
