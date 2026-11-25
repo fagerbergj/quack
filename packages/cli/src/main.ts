@@ -79,7 +79,7 @@ function verdictsOf(newest: any[], ledger: any[]) {
   });
   const lines = verdicts.length ? [] : ['none'];
   lines.push(...verdicts.flatMap(({ kind, version, verdict: v }) => [
-    [`${kind} v${version}`, v.passed ? 'passed' : v.limitReached ? 'failed, released at the revision limit' : 'failed', `score ${+v.score.toFixed(2)}`, v.rubric, v.gatesFailed?.length && `gates failed: ${v.gatesFailed.join(', ')}`].filter(Boolean).join('  '),
+    [`${kind} v${version}`, v.passed ? 'passed' : v.limitReached ? `failed, released at the ${v.cap === 'gates' ? 'gate' : 'revision'} limit` : 'failed', `score ${+v.score.toFixed(2)}`, v.rubric, v.gatesFailed?.length && `gates failed: ${v.gatesFailed.join(', ')}`].filter(Boolean).join('  '),
     ...v.checks.filter(checkFailed).map((c: any) => `  ${c.criterion}.${c.id}: ${oneLine(c.notes?.[0] ?? c.label ?? '')}`),
   ]));
   return { verdicts, lines };

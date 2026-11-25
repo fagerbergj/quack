@@ -154,19 +154,19 @@ test('a failing submit posts nothing; the corrected version is the one that goes
   await session.close();
 });
 
-test('a review released at the revision limit posts with its failures marked', async () => {
+test('a review stuck on a failed gate is released at the gate limit and posts with its failures marked', async () => {
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
-    return [checkout(), step(write(asksButApproves(1))), step(call('submit_review', {})), step(write(asksButApproves(2))), step(call('submit_review', {})), step(write(asksButApproves(3))), step(call('submit_review', {})), step(fauxAssistantMessage('Released.'))];
+    const drafts = [1, 2, 3, 4, 5].flatMap((n) => [step(write(asksButApproves(n))), step(call('submit_review', {}))]);
+    return [checkout(), ...drafts, step(fauxAssistantMessage('Released.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Released.');
-  assert.doesNotMatch(seen[2], /Posted as/);
-  assert.doesNotMatch(seen[4], /Posted as/);
-  assert.match(seen[6], /The revision limit is reached\./);
-  assert.match(seen[6], /Posted as APPROVE: /);
+  assert.ok([2, 4, 6, 8].every((i) => !/Posted as/.test(seen[i])), 'the first four drafts went back');
+  assert.match(seen[10], /The gate limit is reached: 5 versions in a row failed a code gate/);
+  assert.match(seen[10], /Posted as APPROVE: /);
   assert.equal(service.posted.length, 1);
-  assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the revision limit was reached\. Checks that did not pass:\n- /);
-  assert.match(service.posted[0].comments[0].body, /draft 3/);
+  assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the gate limit was reached \(5 versions in a row failed a code gate\)\. Checks that did not pass:\n- /);
+  assert.match(service.posted[0].comments[0].body, /draft 5/);
   assert.ok(service.posted[0].body.startsWith('The change does what issue #3 asks'));
   await session.close();
 });
@@ -373,7 +373,7 @@ test('a closed PR ends the run at the first submit: it is refused for good, not 
   await session.close();
 });
 
-test('submits that keep changing stop at the revision limit: the version released there is final, and the second change after it ends the run', async () => {
+test('submits that keep failing a gate stop at the gate limit: the version released there is final, and the second change after it ends the run', async () => {
   const counter = { turns: 0 };
   const steps = Array.from({ length: 40 }, (_, i) => (_c: unknown) => {
     counter.turns++;
@@ -381,8 +381,8 @@ test('submits that keep changing stop at the revision limit: the version release
   });
   const { done, service, session } = await reviewRun(() => steps);
   assert.equal(done.status, 'done');
-  assert.equal(counter.turns, 1 + 2 * 5, 'checkout, three judged draft and submit pairs, then two refused');
-  assert.equal(service.posted.length, 1, 'v3 went out at the limit with its failures marked');
+  assert.equal(counter.turns, 1 + 2 * 7, 'checkout, five judged draft and submit pairs, then two refused');
+  assert.equal(service.posted.length, 1, 'v5 went out at the gate limit with its failures marked');
   await session.close();
 });
 

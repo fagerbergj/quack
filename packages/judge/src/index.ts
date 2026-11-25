@@ -37,7 +37,13 @@ export type JudgeOptions = {
   reuse?: boolean;
 };
 
-export type Verdict = { /** The run that judged it, so a run's submits can be counted. */ run?: string; passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
+/** Which cap released a failing version: `revisions`, maxRevisions rounds whose model checks ran; `gates`, MAX_GATE_ROUNDS rounds in a row stopped at a failed code gate. */
+export type Cap = 'revisions' | 'gates';
+
+export type Verdict = { /** The run that judged it, so a run's submits can be counted. */ run?: string; passed: boolean; limitReached: boolean; /** Set when limitReached. */ cap?: Cap; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
+
+/** Rounds in a row a run may stop at a failed code gate; they spend no revision, so this alone ends a writer stuck on a gate. */
+export const MAX_GATE_ROUNDS = 5;
 
 export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
   return rubric.criteria.flatMap((c) =>
@@ -298,13 +304,22 @@ async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: Se
 // The run's first input id (stable across tool rounds), or the task id for a workflow run that has no LiveDoc.run.
 const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? api.taskId ?? '');
 
-/** Versions this run has judged since its last pass, passing or failing: the count the revision limit bounds. */
-async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {
+const gateOnly = (v: { checks?: CheckResult[] }) => !!v.checks?.some((k) => k.deferred === 'gate');
+
+/** Versions this run judged since its last pass: `revisions` ran their model checks (the revision budget); `gateRounds` stopped at a gate since the last that ran them. */
+async function budgetInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<{ revisions: number; gateRounds: number }> {
   const run = await runOf(api, ctx);
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-  const mine = sealedVersions(doc, kind).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
+  const mine = sealedVersions(doc, kind).map((v) => v.verdict as unknown as Verdict | null).filter((v) => v?.run === run) as Verdict[];
   // A person's change request after a pass, in the same run, gets a fresh budget.
-  return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
+  const since = mine.slice(mine.findLastIndex((v) => v.passed) + 1);
+  return { revisions: since.filter((v) => !gateOnly(v)).length, gateRounds: since.length - 1 - since.findLastIndex((v) => !gateOnly(v)) };
+}
+
+// A gate-only round counts toward its own cap, a round whose model checks ran toward the revision budget.
+function capOf(b: { revisions: number; gateRounds: number }, gated: boolean, maxRevisions: number): Cap | undefined {
+  if (gated) return b.gateRounds + 1 >= MAX_GATE_ROUNDS ? 'gates' : undefined;
+  return b.revisions >= maxRevisions ? 'revisions' : undefined;
 }
 
 /** Where a round runs: at a seal, which leaves the checks declared `when: 'approval'` for later, or at a person's approve, which runs them all. */
@@ -329,9 +344,9 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
   // The same budget the submit tool enforces: failures in this run since its last pass, not the session's. A person's approve has none.
-  const limit = stage === 'seal' && (await judgedInRun(api, sealed.kind, ctx)) >= opts.maxRevisions;
+  const cap = stage === 'seal' && !s.passed ? capOf(await budgetInRun(api, sealed.kind, ctx), gateOnly({ checks }), opts.maxRevisions) : undefined;
   const undecided = checks.filter((k) => k.undecided).map((k) => `${k.criterion}.${k.id}`);
-  return { run: await runOf(api, ctx), passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
+  return { run: await runOf(api, ctx), passed: s.passed, limitReached: !!cap, ...(cap && { cap }), score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }
 
 /** Judges a sealed version again under opts, without attaching the verdict; memo keys the per-call memoization only, and item reuse follows opts.reuse. */
@@ -350,12 +365,15 @@ const notRunNote = (v: Verdict) => (['approval', 'gate'] as const).flatMap((why)
   return ids.length ? [`; ${ids.join(', ')} ${NOT_RUN[why]}`] : [];
 }).join('');
 
+/** Which cap released a failing version, in plain words; a verdict from before `cap` was recorded hit the revision limit. */
+export const capText = (v: Pick<Verdict, 'cap'>) => (v.cap === 'gates' ? `The gate limit is reached: ${MAX_GATE_ROUNDS} versions in a row failed a code gate, so no model check ran.` : 'The revision limit is reached.');
+
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
   const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric}${notRunNote(v)})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
   // Notes under a pass read as a to-do list and drew revisions that replaced the passed version; the verdict keeps them for people.
   if (v.passed) return `${head}, passed.${delivers ? '' : ` Version ${sealed.version} is final for this run; finish without revising it.`}`;
-  if (v.limitReached) return `${head}, failed:\n${lines}\nThe revision limit is reached.${delivers ? '' : ` Deliver version ${sealed.version} with these failures marked.`}`;
+  if (v.limitReached) return `${head}, failed:\n${lines}\n${capText(v)}${delivers ? '' : ` Deliver version ${sealed.version} with these failures marked.`}`;
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }
 
@@ -373,8 +391,10 @@ export function checkApproval(api: ToolExecutionApi, opts: JudgeOptions, sealed:
 /** Judges a sealed version once: a version that carries a verdict keeps it, from any run. `setTimer` is the progress throttle's test seam. */
 export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, toolName: string, ctx: Context, setTimer = wallTimer): Promise<Outcome> {
   if (sealed.verdict) return { verdict: sealed.verdict as unknown as Verdict };
-  // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
-  if ((await judgedInRun(api, sealed.kind, ctx)) > opts.maxRevisions) return { deny: `${sealed.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.` };
+  // A run past either cap is looping, and another round cannot help.
+  const b = await budgetInRun(api, sealed.kind, ctx);
+  if (b.revisions > opts.maxRevisions) return { deny: `${sealed.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.` };
+  if (b.gateRounds >= MAX_GATE_ROUNDS) return { deny: `${sealed.kind} failed a code gate ${MAX_GATE_ROUNDS} times in a row in this run, the most it gets. Stop: this run is over.` };
   // A workflow step seals from code, whose task shows no running details.
   const shown = shownIn(api, ctx, setTimer);
   const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown, 'seal');

@@ -38,7 +38,7 @@ export function shortOf(c: Check): { n: number; of: number } | undefined {
   if (typeof c.met !== 'number' || of === undefined || !(c.groups === undefined ? of > 1 && !c.marks : of > 1)) return undefined;
   return { n: Math.round((c.weight !== 'gate' && c.weight < 0 ? c.met : 1 - c.met) * of), of };
 }
-export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
+export type Verdict = { passed: boolean; /** The judge released it unpassed at a limit: `cap` says whether the revision limit or the limit on rounds in a row that failed a code gate. */ limitReached?: boolean; cap?: 'revisions' | 'gates'; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 /** A sealed version as the session socket sends it; `verdict` is null while the judge works and absent when read over REST, which carries none. */
 export type SealedArtifact = { kind: string; version: number; hash: string; /** Only the newest version of a kind carries it on the live socket; see useContent. */ content?: string; sealedAt: number; verdict?: Verdict | null; /** The kind's own reading of the version, stored at seal (a spec's "v3", a review's verdict). */ outcome?: string; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string };

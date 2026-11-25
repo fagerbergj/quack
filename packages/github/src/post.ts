@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, LiveDoc, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { feedback, judged, type Verdict } from '@quack/judge';
+import { feedback, judged, MAX_GATE_ROUNDS, type Verdict } from '@quack/judge';
 import { Artifacts, artifactsExtension, attachLink, gate, sealedVersion, sealedVersions, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
@@ -18,6 +18,11 @@ const postFailed = async (res: Response) => ({
 
 const lastPosted = async (api: ToolExecutionApi, version: number | undefined, ctx: Context) => (version ? (await sealedVersion(api, reviewKind.kind, version, ctx))?.content : undefined);
 
+const marksOf = (v: Verdict) => {
+  const cap = v.cap === 'gates' ? `the gate limit was reached (${MAX_GATE_ROUNDS} versions in a row failed a code gate)` : 'the revision limit was reached';
+  return `\n\n---\n**Not fully checked:** ${cap}. Checks that did not pass:\n${feedback(v.checks).map((l) => `- ${l}`).join('\n')}\n`;
+};
+
 // Posts a version once per checkout; it runs after the judge's gate, so with the judge on only a passed or released version gets here.
 function post(config: SessionConfig) {
   return async (sealed: SealedArtifact, v: Verdict | null, api: ToolExecutionApi, ctx: Context) => {
@@ -33,7 +38,7 @@ function post(config: SessionConfig) {
     if (live.headSha !== pr.headSha) return { text: `Nothing was posted: the pull request moved from ${pr.headSha} to ${live.headSha}; check out again with checkout_pr and review that head.`, isError: true };
     if (doc.posted?.includes(sealed.version)) return { text: `Review v${sealed.version} was already posted; nothing was sent again.` };
     if (doc.postedThisCheckout) return { text: `Review v${doc.postedThisCheckout} was already posted for this checkout; a run posts one review, so v${sealed.version} was not sent.` };
-    const marks = v?.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks).map((l) => `- ${l}`).join('\n')}\n` : '';
+    const marks = v?.limitReached ? marksOf(v) : '';
     const event = EVENT[parseReview(sealed.content).verdict ?? ''];
     const prior = await lastPosted(api, doc.posted?.at(-1), ctx);
     const { body: text, fallbackBody, comments } = await postable(api, config.repoDir ?? 'repo', pr.baseRef, sealed.content, ctx, prior);

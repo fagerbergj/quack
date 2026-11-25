@@ -8,7 +8,7 @@ export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" 
 function headline(v: Verdict, failed: number): string {
   if (v.passed) return 'Double-check passed';
   const fix = `${failed} to fix`;
-  return v.limitReached ? `Double-check failed at the revision limit · ${fix}` : `Double-check failed · ${fix}`;
+  return v.limitReached ? `Double-check failed at the ${v.cap === 'gates' ? 'gate' : 'revision'} limit · ${fix}` : `Double-check failed · ${fix}`;
 }
 
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */

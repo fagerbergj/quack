@@ -116,6 +116,30 @@ test('the gate judges with item reuse on: a model item unchanged since the last 
   assert.equal(r.answer, 'Done.');
 });
 
+// A note whose politeness model check runs at the seal, once its says-ok gate passes.
+const gatedPolite: Judged = {
+  rubric: { ...sayOk, criteria: [...sayOk.criteria, { id: 'manner', checks: [{ id: 'polite', label: 'Is not polite', weight: 1 }] }] }, inputs: async () => ({ intro: 'Hello there.' }),
+  declaration: { scopes: { intro: { split: { name: 'whole', from: 'intro' } } }, checks: { polite: { scope: 'intro', question: { type: 'bool', instructions: 'Is it polite?' }, aggregate: { name: 'all' } } } },
+};
+const v = (x: { verdict: unknown }) => x.verdict as { passed: boolean; limitReached: boolean; cap?: string; checks: Array<{ id: string; deferred?: string; resolvers: object }> };
+
+test('a round stopped at a failed code gate spends no revision: with none left, the next version still runs its model checks', async () => {
+  const yes = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason": "greets"}');
+  const r = await run('gate-budget', { maxRevisions: 0 }, [write('no'), submit, write('ok'), submit, yes, done], undefined, undefined, gatedPolite);
+  assert.deepEqual(r.versions.map((x) => [v(x).passed, v(x).limitReached]), [[false, false], [true, false]]);
+  assert.equal(v(r.versions[0]).checks.find((c) => c.id === 'polite')?.deferred, 'gate');
+  assert.match(r.seen[2], /manner\.polite not run because a gate failed.*Revise the file/s);
+  assert.deepEqual(v(r.versions[1]).checks.find((c) => c.id === 'polite')?.resolvers, { 'faux-1': 1 });
+});
+
+test('a writer stuck on a failed gate is released at the gate limit, and the verdict says so', async () => {
+  const stuck = Array.from({ length: 5 }, (_, i) => [write(`no ${i + 1}`), submit]).flat();
+  const r = await run('gate-cap', { maxRevisions: 0 }, [...stuck, done], undefined, undefined, gatedPolite);
+  assert.deepEqual(r.versions.map((x) => v(x).cap ?? null), [null, null, null, null, 'gates']);
+  assert.match(r.seen[10], /The gate limit is reached: 5 versions in a row failed a code gate, so no model check ran\. Deliver version 5/);
+  assert.equal(r.answer, 'Done.');
+});
+
 // Resolves with the first value `pick` finds in the session's approvals, watching until one appears.
 async function untilApprovals<T>(s: Session, pick: (items: Record<string, Approval>) => T | undefined): Promise<T> {
   await s.root.commit(async (tx) => { await tx.doc(Approvals, s.root.id); }, BACKGROUND_CONTEXT);
