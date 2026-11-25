@@ -71,7 +71,7 @@ A list prints one page, of at most `--page-size` rows (the server's default 100,
 
 ## Verdicts
 
-`show --verdict` adds the judge's verdict on each kind's newest version, when it has one: passed or failed, the score, the rubric and its version, the failed gates, and each failed check with its first note cut to one line. Verdicts are not on the REST artifact rows, so `--verdict` reads them from the session's socket, which starts a stopped session's process as opening it in the web UI does. `--json` adds them as `verdicts`.
+`show --verdict` adds the judge's verdict on each kind's newest version, when it has one: passed or failed (or failed and released at the revision limit, after `maxRevisions` revisions whose model checks ran, or at the gate limit, after 5 versions in a row that failed a code gate and so ran no model check), the score, the rubric and its version, the failed gates, and each failed check with its first note cut to one line. Verdicts are not on the REST artifact rows, so `--verdict` reads them from the session's socket, which starts a stopped session's process as opening it in the web UI does. `--json` adds them as `verdicts`.
 
 ```
 $ quack show --verdict 'github:fagerbergj/quack#2238'

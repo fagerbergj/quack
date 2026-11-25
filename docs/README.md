@@ -84,6 +84,7 @@ A ref through a symlink out of the workspace (an early session's `app -> /app`, 
 A replayed code gate applies the arm's rubric and contracts code, so it can differ from the verdict prod recorded under older ones: `contract.spec@4` has no `baseline_matches`, and older code counted an approval only once it was recorded, and matched versions and answer links by other rules.
 
 Compare a replay's code gates with prod only where prod judged with the same rubric and code; the model checks compare either way.
+A round whose code gate fails returns before any model is asked, its model checks listed as not run, so an arm whose gate fails a case has no model checks to compare on it.
 
 To measure a decision-model change, run two arms on the same tree:
 

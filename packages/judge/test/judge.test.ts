@@ -115,7 +115,7 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
 const tool = (name: string, args: Record<string, string>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 const yes = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason": "it explains the risk"}');
 
-test('Clef answers confident checks, an uncertain one escalates, and a failed gate sends the version back', async () => {
+test('a failed gate sends the version back without asking a model; on the next, Clef answers confident checks and an uncertain one escalates', async () => {
   process.env.QUACK_CLEF_KEY = 'none';
   clefCalls.length = 0;
   // Clef is unsure whether f2 says why (0.5); everything else it answers confidently, preference_only at exactly the 0.2 edge.
@@ -127,7 +127,6 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   const { done, versions } = await run(baseUrl, 8192, [
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),
     tool('submit_review', {}),
-    yes,
     tool('write', { path: 'artifacts/review.md', content: good }),
     tool('submit_review', {}),
     yes,
@@ -138,6 +137,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   assert.ok(shared.length > 0 && shared.every(Boolean), 'the judge\'s escalations run under the session\'s own slot');
   assert.deepEqual(versions[0].gatesFailed, ['structured_verdict.verdict_present']);
   assert.equal(versions[0].passed, false);
+  assert.deepEqual(versions[0].checks.filter((c: any) => c.deferred === 'gate').map((c: any) => c.id), ['takeaway_actionable', 'says_why', 'preference_only'], 'the failed gate left the model checks unasked');
 
   const v2 = versions[1];
   assert.equal(v2.passed, true);

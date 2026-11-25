@@ -29,7 +29,7 @@ export type Approval = { id: string; tool: string; args: unknown; requestedAt: n
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; /** A decided yes/no fold sends a boolean; only a number is a share. */ met: boolean | number | null; notes: string[]; scope?: string; /** Items the check ran over, or the groups of a grouped fold; `marks` set means it counts none. */ units?: number; groups?: number; marks?: string[];
   /** Settled items by resolver: `code`, or the modelId that answered; `reused` maps items answered in an earlier round to that version. */ resolvers?: Record<string, number>; reused?: Record<string, number>;
   /** Items that left the decision model, by cause (declared, unsure, pass-only-no, over-window, refused, outage); absent when none. */ escalated?: Record<string, number>;
-  /** Not run on this verdict: it runs when a person approves the version. */ deferred?: 'approval' };
+  /** Not run on this verdict: it runs when a person approves the version, or once a version passes its gates. */ deferred?: 'approval' | 'gate' };
 // Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? Number(c.met) < 1 : Number(c.met) > 0);
 /** How many items fell short, when the judge counted them: a share over several items, not a single yes/no. */
@@ -38,7 +38,7 @@ export function shortOf(c: Check): { n: number; of: number } | undefined {
   if (typeof c.met !== 'number' || of === undefined || !(c.groups === undefined ? of > 1 && !c.marks : of > 1)) return undefined;
   return { n: Math.round((c.weight !== 'gate' && c.weight < 0 ? c.met : 1 - c.met) * of), of };
 }
-export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
+export type Verdict = { passed: boolean; /** The judge released it unpassed at a limit: `cap` says whether the revision limit or the limit on rounds in a row that failed a code gate. */ limitReached?: boolean; cap?: 'revisions' | 'gates'; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 /** A sealed version as the session socket sends it; `verdict` is null while the judge works and absent when read over REST, which carries none. */
 export type SealedArtifact = { kind: string; version: number; hash: string; /** Only the newest version of a kind carries it on the live socket; see useContent. */ content?: string; sealedAt: number; verdict?: Verdict | null; /** The kind's own reading of the version, stored at seal (a spec's "v3", a review's verdict). */ outcome?: string; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string };

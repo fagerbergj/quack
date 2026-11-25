@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { PASS_ONLY, type Declaration, type Question } from '../src/declaration.ts';
-import { rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
+import { rejudge, report, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
 import { PROMPT_VERSION } from '../src/resolve.ts';
 import { reuseKey } from '../src/reuse.ts';
 import { sessionApi } from './fake-session.ts';
@@ -168,4 +168,22 @@ test('a reused answer is not an escalation: only the items asked this round are 
   assert.deepEqual([v1.checks[0].escalated, v1.checks[0].reused], [{ unsure: 1 }, undefined]);
   const v2 = await round(api, optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'd') }), 2);
   assert.deepEqual([v2.checks[0].escalated, v2.checks[0].reused], [{ unsure: 1 }, { 'rows a': 1, 'rows b': 1 }], 'a, escalated on v1, is reused and not counted again');
+});
+
+test('a failed code gate returns at once: no model is asked, the model checks are listed as not run and left out of the score, and the next version reuses earlier answers', async () => {
+  const { api, seen } = sessionApi(() => 0.95, () => said('yes'));
+  let content = 'ok';
+  const gate = { id: 'says_ok', label: 'Does not say ok', weight: 'gate' as const, code: () => ({ met: content === 'ok' ? 1 : 0 }) };
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b') }, rubricOf(1, [gate]));
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual([v1.passed, seen.clef], [true, ['a', 'b']], 'gates pass, so the model checks run');
+  content = 'no';
+  const v2 = await round(api, opts, 2);
+  assert.deepEqual([v2.passed, v2.gatesFailed, v2.undecided, seen.clef.length, seen.judge], [false, ['c.says_ok'], [], 2, []]);
+  assert.deepEqual(v2.checks.map((k) => [k.id, k.met, k.deferred]), [['says_ok', 0, undefined], ['kept', null, 'gate']]);
+  assert.equal(v2.score, 1, 'the unrun model check adds nothing to the score; the gate fails the version');
+  assert.match(report(sealedV(2), v2, 'submit'), /c\.kept not run because a gate failed, they run once the gates pass\), failed:\n- gate c\.says_ok/);
+  content = 'ok';
+  const v3 = await round(api, opts, 3);
+  assert.deepEqual([v3.passed, seen.clef.length, v3.checks.find((k) => k.id === 'kept')!.reused], [true, 2, { 'rows a': 1, 'rows b': 1 }]);
 });
