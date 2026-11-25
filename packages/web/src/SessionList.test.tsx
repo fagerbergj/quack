@@ -53,3 +53,11 @@ test('search finds a session past the cap', async () => {
   expect(await screen.findByRole('link', { name: /Needle/ }, { timeout: 5000 })).toBeInTheDocument();
   expect(within(await screen.findByRole('region', { name: 'Recent' })).getAllByRole('link')).toHaveLength(1);
 });
+
+test('an interrupted row says why in its tooltip and to screen readers', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:cut', { title: 'Cut off', lastActivity: '2026-11-02T01:00:00.000Z' })] };
+  const recent = await open();
+  const why = 'The last run stopped before it finished; it resumes on the next message';
+  expect(within(recent).getByTitle(why)).toHaveTextContent('Interrupted');
+  expect(within(recent).getByRole('link')).toHaveAccessibleName(expect.stringContaining(why));
+});

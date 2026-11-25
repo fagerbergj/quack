@@ -46,7 +46,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
           </span>
           <time dateTime={r.lastActivity} title="Last activity" className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.lastActivity, now)}</time>
         </span>
-        <span className={`min-w-0 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.wait ? <Waiting w={l.wait} /> : l.line}</span>
+        <span className={`min-w-0 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.wait ? <Waiting w={l.wait} /> : l.why ? <span title={l.why}><span aria-hidden="true">{l.line}</span><span className="sr-only">{l.why}</span></span> : l.line}</span>
       </a>
       <span className="col-start-3 row-start-2 flex items-center gap-2">
         <SessionChips sessionKey={r.key} />

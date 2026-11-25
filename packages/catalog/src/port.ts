@@ -170,7 +170,8 @@ export interface SessionCatalogStore {
   watermark(key: string): Promise<number | undefined>;
   /** Moves the watermark past an event the catalog does not apply (an extension event, a stopped or archived echo). */
   advanceWatermark(write: EventWrite, change: { key: string }): Promise<void>;
-  /** running from idle, stopped or archived; idle from running or stopped, never archived; stopped from running or idle. */
+  /** running from idle, stopped or archived; idle from running or stopped, never archived; stopped from running or idle.
+   * A running event clears lastRun: the run going is the latest, until its run.ended. */
   transitionSession(write: EventWrite, change: { key: string; to: 'running' | 'idle' }): Promise<{ applied: boolean; state?: SessionState }>;
   transitionSession(write: ActionWrite, change: { key: string; to: 'stopped' }): Promise<{ applied: boolean; state?: SessionState }>;
   /** title.set (the derived default) or a person's rename; null restores the default. */
