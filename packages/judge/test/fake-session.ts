@@ -30,13 +30,10 @@ export function sessionApi(clef: Clef, judge: Judge) {
       },
       getModel: (provider: string, id: string) => ({ provider, id }),
       completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
-        const prompt = r.messages[0].content;
-        const rows = prompt.startsWith('Evidence:') ? [...prompt.matchAll(/^- q\d+: About items\[\d+\] \(rows (\w+)\)/gm)].map((m) => m[1]) : rowsOf(prompt);
-        seen.judge.push(...rows);
-        const replies = rows.map((row) => judge(row));
-        if (replies.includes('error')) return { stopReason: 'error', content: [] };
-        const text = prompt.startsWith('Evidence:') ? `{${replies.map((t, n) => (t.startsWith('{') ? `"q${n}": ${t}` : '')).filter(Boolean).join(', ')}}` : replies[0];
-        return { stopReason: 'stop', content: [{ type: 'text', text }] };
+        const [row] = rowsOf(r.messages[0].content);
+        seen.judge.push(row);
+        const reply = judge(row);
+        return reply === 'error' ? { stopReason: 'error', content: [] } : { stopReason: 'stop', content: [{ type: 'text', text: reply }] };
       },
     },
   };

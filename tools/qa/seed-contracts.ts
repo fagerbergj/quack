@@ -103,9 +103,8 @@ const PASSING = Object.values(contractDeclaration.checks).flatMap((c) => ('pass'
 export const answer = (asked: string) => PASSING.find(([q]) => asked.includes(q))?.[1] ?? 'yes';
 
 const verdict = (asked: string) => ({ choice: answer(asked), confidence: 1, reason: 'fine' });
-// A judge turn is a single "Decision:" or a batched "Evidence:" prompt; answering the batch by question id keeps the script's queue aligned.
-const judged = (p: string) => p.startsWith('Decision:') ? verdict(p)
-  : p.startsWith('Evidence:') ? Object.fromEntries([...p.matchAll(/^- (q\d+): ([\s\S]*?)\n  Options:/gm)].map(([, id, q]) => [id, verdict(q!)])) : undefined;
+// A judge turn is a "Decision:" prompt; every other turn is the script's.
+const judged = (p: string) => (p.startsWith('Decision:') ? verdict(p) : undefined);
 
 // Judge questions get the passing answer; every other turn writes the next version and submits it.
 function scripted(versions: ContractSpec[]) {
