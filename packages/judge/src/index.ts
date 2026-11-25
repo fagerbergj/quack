@@ -6,7 +6,7 @@ import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold
 import { limiter } from './limit.ts';
 import { answerItems, pack, passing, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
-import { feedback, score, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
+import { feedback, score, type Check, type CheckResult, type Deferred, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
 export { buildEvidence, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type Where } from './declaration.ts';
@@ -313,7 +313,7 @@ export type Stage = 'seal' | 'approval';
 /** Whether a rubric leaves any check for a person's approve. */
 export const hasApprovalChecks = (r: Rubric) => r.criteria.some((c) => c.checks.some((k) => k.when === 'approval'));
 const atSeal = (r: Rubric): Rubric => ({ ...r, criteria: r.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => k.when !== 'approval') })) });
-const deferredRows = (r: Rubric): CheckResult[] => r.criteria.flatMap((c) => c.checks.filter((k) => k.when === 'approval').map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: null, units: 0, resolvers: {}, notes: [], deferred: 'approval' as const })));
+const notRun = (r: Rubric, which: (k: Check) => boolean, deferred: Deferred): CheckResult[] => r.criteria.flatMap((c) => c.checks.filter(which).map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: null, units: 0, resolvers: {}, notes: [], deferred })));
 
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report, stage: Stage = 'approval'): Promise<Verdict> {
   const run = stage === 'seal' ? { ...opts, rubric: atSeal(opts.rubric) } : opts;
@@ -322,8 +322,10 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const built = await evidenceFor(api, opts, sealed, ctx);
   const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
   const code = codeResults(run.rubric, sealed.content, built.evidence);
-  const model = await modelResults(api, run, built, memo, ctx, code, reuse, report);
-  const checks = [...code, ...model, ...(stage === 'seal' ? deferredRows(opts.rubric) : [])];
+  // A failed code gate already fails the version, so its model checks wait for a version that passes its gates.
+  const gated = score(run.rubric, code).gatesFailed.length > 0;
+  const model = gated ? notRun(run.rubric, (k) => !k.code, 'gate') : await modelResults(api, run, built, memo, ctx, code, reuse, report);
+  const checks = [...code, ...model, ...(stage === 'seal' ? notRun(opts.rubric, (k) => k.when === 'approval', 'approval') : [])];
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
   // The same budget the submit tool enforces: failures in this run since its last pass, not the session's. A person's approve has none.
@@ -342,9 +344,14 @@ export function undecidedMessage(ids: string[], toolName: string): string {
   return `The decision model or the judge model gave no usable answer for ${ids.join(', ')} (usually one is at capacity or unreachable), so nothing was scored. Call ${toolName} again.`;
 }
 
+const NOT_RUN: Record<Deferred, string> = { approval: 'not run yet, they run when a person approves', gate: 'not run because a gate failed, they run once the gates pass' };
+const notRunNote = (v: Verdict) => (['approval', 'gate'] as const).flatMap((why) => {
+  const ids = v.checks.filter((k) => k.deferred === why).map((k) => `${k.criterion}.${k.id}`);
+  return ids.length ? [`; ${ids.join(', ')} ${NOT_RUN[why]}`] : [];
+}).join('');
+
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
-  const later = v.checks.filter((k) => k.deferred).map((k) => `${k.criterion}.${k.id}`);
-  const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric}${later.length ? `; ${later.join(', ')} not run yet, they run when a person approves` : ''})`;
+  const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric}${notRunNote(v)})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
   // Notes under a pass read as a to-do list and drew revisions that replaced the passed version; the verdict keeps them for people.
   if (v.passed) return `${head}, passed.${delivers ? '' : ` Version ${sealed.version} is final for this run; finish without revising it.`}`;

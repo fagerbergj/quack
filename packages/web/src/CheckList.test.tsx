@@ -84,6 +84,13 @@ test('failing checks come first, open on their failing items with each note; a p
   expect(within(open).getByText('3 of 60')).toBeInTheDocument();
 });
 
+test("a model check a failed gate kept from running is listed apart from the approve-time ones, as not run", () => {
+  render(<CheckResult verdict={verdict([check({ id: 'g', weight: 'gate', met: 0 }), check({ id: 'm', label: 'A claim its sources don\'t back', met: null, deferred: 'gate' })])} open />);
+  const group = screen.getByText('Run once the gates pass').parentElement!;
+  expect(within(group).getByRole('img', { name: "Didn't run: a gate failed" })).toBeInTheDocument();
+  expect(screen.queryByText('Run when you approve')).toBeNull();
+});
+
 test('a check opens on its first 5 failing items; the rest wait behind "N more failing"', async () => {
   const notes = Array.from({ length: 8 }, (_, i) => `f${i + 1}: reason ${i + 1}.`);
   render(<CheckResult verdict={verdict([check({ met: 0, units: 8, notes })])} open />);

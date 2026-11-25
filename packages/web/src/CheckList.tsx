@@ -24,15 +24,17 @@ export function Note({ text, scope, about }: { text: string; scope?: string; abo
   );
 }
 
-/** A check's result as one mark: passed, failed, didn't apply, or not run until the version is approved. */
+const NOT_RUN = { approval: ['Runs when you approve', 'On approve'], gate: ["Didn't run: a gate failed", 'Not run'] } as const;
+
+/** A check's result as one mark: passed, failed, didn't apply, or not run until the version is approved or passes its gates. */
 export function Mark({ check }: { check: Check }) {
-  const [glyph, tone, word] = check.deferred ? ['…', 'font-normal text-muted', 'Runs when you approve'] : check.met === null ? ['–', 'font-normal text-muted', "Didn't apply"] : checkFailed(check) ? ['✗', 'font-bold text-danger', 'Failed'] : ['✓', 'font-bold text-success', 'Passed'];
+  const [glyph, tone, word] = check.deferred ? ['…', 'font-normal text-muted', NOT_RUN[check.deferred][0]] : check.met === null ? ['–', 'font-normal text-muted', "Didn't apply"] : checkFailed(check) ? ['✗', 'font-bold text-danger', 'Failed'] : ['✓', 'font-bold text-success', 'Passed'];
   return <span role="img" aria-label={word} title={word} className={`w-4 flex-none text-center ${tone}`}>{glyph}</span>;
 }
 
 // How many items fell short on screen ("3 of 60"); the words go to assistive tech and the tooltip.
 function Short({ check }: { check: Check }) {
-  if (check.deferred) return <span aria-hidden="true" className="flex-none text-[11px] text-muted">On approve</span>;
+  if (check.deferred) return <span aria-hidden="true" className="flex-none text-[11px] text-muted">{NOT_RUN[check.deferred][1]}</span>;
   if (check.met === null) return <span aria-hidden="true" className="flex-none text-[11px] text-muted">Didn't apply</span>;
   const s = checkFailed(check) ? shortOf(check) : undefined;
   if (!s) return null;
