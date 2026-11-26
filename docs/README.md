@@ -102,7 +102,7 @@ Last: every case and check whose `met` values differ between arms, with each arm
 
 Required keys:
 
-- `name` (`[\w-][\w.-]*`)
+- `name` (`^[\w-][\w.-]*$`)
 - `version` (positive integer)
 - `extensions` (name to config object)
 
@@ -113,7 +113,7 @@ Optional keys:
 - `model` (`provider/modelId`)
 - `prompt` (a bare file name beside `agent.json`, no `/` or `\`)
 - `exec` (`timeoutSeconds` only)
-- `retention` (`idleDays` only)
+- `retention` (`idleDays`, required; exactly this one key)
 
 An unknown key, a bad value or a prompt path leaves the bundle unoffered by the distributor, fails `tools/bundle-locks.ts` and fails the validator.
 

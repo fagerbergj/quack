@@ -217,7 +217,7 @@ test('a tick that throws is logged and the loop keeps running', async (t) => {
   await svc.start?.();
   await fired;
   assert.equal(calls.length, 1);
-  assert.ok(logged.some((m) => m.includes('database is busy')), 'the failed tick was logged');
+  assert.ok(logged.some((m) => m.includes('schedules: tick failed') && m.includes('database is busy')), 'the failed tick was logged by the loop');
 });
 
 test('a schedule can be deleted: 204 with no body, then 404', async () => {
@@ -301,7 +301,7 @@ test('the list pages by id: pageSize, nextPageToken only until the last page, an
 test('a token minted before the sdk cursor still decodes', async () => {
   const { api } = await start(':memory:');
   for (const id of ['nightly', 'oz', 'zed']) await put(api, { ...daily, id });
-  // Legacy base64url JSON-array cursor format kept decodable for already-issued tokens.
+  // A pageToken's shape is part of the API: a token already issued must still decode after any cursor change.
   const old = 'WyJzY2hlZHVsZXMiLCJuaWdodGx5Il0';
   assert.equal(Buffer.from(old, 'base64url').toString(), '["schedules","nightly"]');
   assert.deepEqual((await api('GET', `/?pageToken=${old}`)).json.schedules.map((s: any) => s.id), ['oz', 'zed']);

@@ -18,6 +18,7 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** A relative link the web app resolves under any prefix. */
 export const sessionLink = (key: string) => `#/s/${encodeURIComponent(key)}`;
 
+// A pending ask outranks a run going, and a run going outranks its own failed last run.
 const stateOf = (row: SessionRow): State =>
   row.pendingAsks > 0 ? 'needs_you' : row.lastRun?.outcome === 'failed' && row.state !== 'running' ? 'failed' : row.state === 'running' ? 'running' : 'done';
 
