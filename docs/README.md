@@ -100,7 +100,20 @@ Last: every case and check whose `met` values differ between arms, with each arm
 
 `agents/<name>/agent.json` is closed.
 
-Its keys are `name` (`[\w-][\w.-]*`) and `version` (positive integer) and `extensions` (name to config object), all required, and optional `status` (`draft` or `promoted`), `description` (string), `model` (`provider/modelId`), `prompt` (a bare file name beside `agent.json`, no `/` or `\`), `exec` (`timeoutSeconds` only) and `retention` (`idleDays` only).
+Required keys:
+
+- `name` (`^[\w-][\w.-]*$`)
+- `version` (positive integer)
+- `extensions` (name to config object)
+
+Optional keys:
+
+- `status` (`draft` or `promoted`)
+- `description` (string)
+- `model` (`provider/modelId`)
+- `prompt` (a bare file name beside `agent.json`, no `/` or `\`)
+- `exec` (`timeoutSeconds` only)
+- `retention` (`idleDays`, required; exactly this one key)
 
 An unknown key, a bad value or a prompt path leaves the bundle unoffered by the distributor, fails `tools/bundle-locks.ts` and fails the validator.
 
@@ -160,7 +173,15 @@ With `QUACK_SESSION_DRIVER=docker`, each session runs in its own container from 
 
 Session containers get no DNS: gVisor cannot reach Docker's embedded resolver, so both URLs name their hosts by IP, and the proxy resolves every other name. The driver sets `HTTP_PROXY`, `HTTPS_PROXY`, their lower-case forms and `NODE_USE_ENV_PROXY=1` in each container, with `NO_PROXY` set to the distributor's address, `localhost` and `127.0.0.1`. Through the proxy, Node sends `CONNECT <name>` without resolving the name itself, so the research `web_fetch` address check refuses only IP literals there; squid's `not_public` ACL is what refuses names that resolve to private addresses.
 
-The distributor talks to the Docker Engine at `QUACK_DOCKER_HOST` (default `/var/run/docker.sock`). It makes only these calls: `GET /networks/{name}`, `GET /containers/json`, `POST /containers/create`, `POST /containers/{name}/start`, `POST /containers/{name}/stop`, `POST /containers/{name}/wait` and `DELETE /containers/{name}`. Access to that socket is root on the host, so the distributor reaches it only through the docker gate.
+The distributor talks to the Docker Engine at `QUACK_DOCKER_HOST` (default `/var/run/docker.sock`). Access to that socket is root on the host, so the distributor reaches it only through the docker gate, making only these calls:
+
+- `GET /networks/{name}`
+- `GET /containers/json`
+- `POST /containers/create`
+- `POST /containers/{name}/start`
+- `POST /containers/{name}/stop`
+- `POST /containers/{name}/wait`
+- `DELETE /containers/{name}`
 
 The **docker gate** (`node packages/distributor/src/docker-gate.ts`, from the same image) runs in its own container. It mounts the real socket and serves `QUACK_GATE_LISTEN` (a TCP port, default `2375`, or a socket path); the distributor's `QUACK_DOCKER_HOST` names it, e.g. `tcp://quack-docker-gate:2375`. It reads the same `QUACK_SESSION_IMAGE`, `QUACK_SESSION_RUNTIME`, `QUACK_SESSION_NETWORK` and `QUACK_DATA_VOLUME`/`QUACK_HOST_DATA_DIR` as the distributor, and answers 403 to anything but the calls above:
 

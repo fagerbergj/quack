@@ -8,8 +8,6 @@ const TITLE_MAX = 120;
  * Core's lifecycle reads it to derive the stream. */
 export type SessionTitleDoc = { title: string | null; changes: number; at: number };
 
-/** The session's default-title document: conversation-scoped, kind 'quack.session-title', starting at
- * { title: null, changes: 0, at: 0 }. */
 export const SessionTitle = defineDoc<SessionTitleDoc>({
   kind: 'quack.session-title', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ title: null, changes: 0, at: 0 }), checkpointWhen: () => false,

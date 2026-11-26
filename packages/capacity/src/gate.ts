@@ -233,7 +233,7 @@ export class CapacityGate {
     }, ms);
   }
 
-  // False when the service failed and the generation goes ungated.
+  // Undefined when no lease was taken (service down, cut, or its run ended); the generation goes ungated.
   async #acquire(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
     try {
       return await this.#poll(lease, signal);
