@@ -68,7 +68,6 @@ test('a preview sums each starter\'s recent average in code, counting a bye or a
   const f = await digestFacts(PREVIEW);
   assert.equal(f.mode, 'preview');
   const [mallard, teal] = f.games[0].sides;
-  // Quill averages 18 and Wide 12; Rowe is Out and Dash is on his bye.
   assert.deepEqual([mallard.pts, mallard.out, teal.pts, f.games[0].margin], [30, ['Rob Rowe (Out)', 'Dan Dash (bye)'], 26.67, 3.33]);
   assert.deepEqual(mallard.top.map((t) => [t.name, t.pts]), [['Quinn Quill', 18], ['Wade Wide', 12]]);
   assert.deepEqual(mallard.designated, [{ id: 'p3', name: 'Wade Wide', inj: 'Questionable' }]);

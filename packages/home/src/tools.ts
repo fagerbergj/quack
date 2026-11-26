@@ -18,7 +18,6 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** A relative link the web app resolves under any prefix. */
 export const sessionLink = (key: string) => `#/s/${encodeURIComponent(key)}`;
 
-// The row carries all of it: a pending ask needs a person, a failed last run is failed, a run going is running.
 const stateOf = (row: SessionRow): State =>
   row.pendingAsks > 0 ? 'needs_you' : row.lastRun?.outcome === 'failed' && row.state !== 'running' ? 'failed' : row.state === 'running' ? 'running' : 'done';
 

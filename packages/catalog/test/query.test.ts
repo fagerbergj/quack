@@ -72,7 +72,7 @@ test('a date-time without Z or an offset is refused, so no q depends on the host
 });
 
 test('dates and date-times read the same rows under every host time zone', () => {
-  // A zone-less date-time is in the list: refused everywhere now, where it used to resolve in each host's zone.
+  // Includes a zone-less date-time to verify it is refused identically across host time zones.
   const queries = ['createdAt:2026-11-01', 'createdAt:>"2026-11-01T09:00:00Z"', 'lastActivity:<"2026-11-01T09:00:00.250+09:00"', 'oldestAskAt:["2026-11-01" TO "2026-11-02T00:00:00-05:00"}', 'createdAt:>"2026-11-01T09:00:00"'];
   const read = (q: string) => { try { return parseQuery('sessions', q); } catch (err) { return `refused: ${(err as Error).message}`; } };
   const saved = process.env.TZ;

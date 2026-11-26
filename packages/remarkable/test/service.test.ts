@@ -447,7 +447,7 @@ test('two concurrent requests with one requestId share one batch', async () => {
 test('a topics token minted before the sdk cursor still decodes', async () => {
   const { url } = await stub();
   for (const n of ['pear', 'Work notes', 'zebra']) await fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify({ name: n }) });
-  // Minted by this service's own encodeToken on main, before it moved to pageCursor('topics').
+  // Legacy base64url JSON-array cursor format kept decodable for already-issued tokens.
   const old = 'WyJ0b3BpY3MiLCJXb3JrIG5vdGVzIl0';
   assert.equal(Buffer.from(old, 'base64url').toString(), '["topics","Work notes"]');
   assert.deepEqual(await (await fetch(`${url}/topics?pageToken=${old}`)).json(), { topics: ['zebra'] });

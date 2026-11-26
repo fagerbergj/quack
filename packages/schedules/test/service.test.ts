@@ -205,7 +205,9 @@ test('a one-shot registered after its time but inside its window fires; a record
   assert.equal(calls.length, 1, 'past its window it was recorded missed, and a wider window later does not revive it');
 });
 
-test('a tick that throws is logged and the loop keeps running', async () => {
+test('a tick that throws is logged and the loop keeps running', async (t) => {
+  const logged: string[] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => logged.push(args.map(String).join(' ')));
   const { svc, api } = await start(':memory:', 1);
   clock = new Date('2026-01-01T08:00:00Z');
   await put(api, daily);
@@ -215,6 +217,7 @@ test('a tick that throws is logged and the loop keeps running', async () => {
   await svc.start?.();
   await fired;
   assert.equal(calls.length, 1);
+  assert.ok(logged.some((m) => m.includes('database is busy')), 'the failed tick was logged');
 });
 
 test('a schedule can be deleted: 204 with no body, then 404', async () => {
@@ -298,7 +301,7 @@ test('the list pages by id: pageSize, nextPageToken only until the last page, an
 test('a token minted before the sdk cursor still decodes', async () => {
   const { api } = await start(':memory:');
   for (const id of ['nightly', 'oz', 'zed']) await put(api, { ...daily, id });
-  // Minted by this service's own encodeToken on main, before it moved to pageCursor('schedules').
+  // Legacy base64url JSON-array cursor format kept decodable for already-issued tokens.
   const old = 'WyJzY2hlZHVsZXMiLCJuaWdodGx5Il0';
   assert.equal(Buffer.from(old, 'base64url').toString(), '["schedules","nightly"]');
   assert.deepEqual((await api('GET', `/?pageToken=${old}`)).json.schedules.map((s: any) => s.id), ['oz', 'zed']);

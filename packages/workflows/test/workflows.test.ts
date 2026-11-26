@@ -260,8 +260,6 @@ test('a decision step waits for a person across a restart and resumes on the ans
   assert.equal(await answerQuestion(b.root, ask.id, 'Maybe', { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'only a listed option answers');
   assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'a decision step takes labels only');
   assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'and no note');
-  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'a decision step takes labels only');
-  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'and no note');
   assert.equal(await answerQuestion(b.root, ask.id, 'Pollard', { kind: 'person', name: 'jf' }, ctx), 'ok');
   assert.equal(await answerQuestion(b.root, ask.id, 'Stevenson', { kind: 'person', name: 'jf' }, ctx), 'answered', 'the first answer stands');
   const outcome = await runWorkflow(b.harness, b.root, build(), null);

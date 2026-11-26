@@ -77,7 +77,6 @@ async function ok<T>(res: Promise<Response>, what: string): Promise<T> {
 }
 type Comment = { id: string; state: string; quote: string; replies: Array<{ text: string }>; addressedIn?: number; outdated?: { mark: string; in: number } };
 
-// Shoots the page light, then dark, then goes back to light.
 async function both(ctx: Ctx, page: Page, name: string) {
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme });
