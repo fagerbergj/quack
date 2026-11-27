@@ -74,6 +74,10 @@ export async function writeLaunchToken(dir: string): Promise<string> {
 export const LISTENER_TOKEN_FILE = '.listener-token';
 export const writeListenerToken = (dir: string, token: string) => writeFile(join(dir, LISTENER_TOKEN_FILE), token, { mode: 0o600 });
 
+// The store and its write-ahead log: a write not yet in the store moves the log's stat. The read itself leaves an empty log, which holds nothing.
+const STORE_FILES = ['session.sqlite', 'session.sqlite-wal'];
+// shortcut: the most recently opened stopped sessions' frames stay in memory, a few MB at most for a large store; raise if reopens miss.
+const PAGE_CACHE = 16;
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
 /** The agent definition a session was pinned to; the file does not exist for a session with no agent. */
@@ -358,6 +362,18 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return found.filter((w) => w !== undefined);
   }
 
+  // A stopped session's store does not change, so its page frames are kept by the store's stat and a reopen costs one stat; any write moves it.
+  const frames = new Map<string, { stamp: string; frames: object[] }>();
+  async function pageFrames(key: string): Promise<object[]> {
+    const dir = sessionDir(key);
+    const stamp = (await Promise.all(STORE_FILES.map((f) => stat(join(dir, f), { bigint: true }).then((s) => (s.size ? `${s.mtimeNs}:${s.size}` : '-'), () => '-')))).join('/');
+    const hit = frames.get(key);
+    frames.delete(key);
+    const fresh = hit?.stamp === stamp ? hit.frames : await snapshotFrames(dir);
+    frames.set(key, { stamp, frames: fresh });
+    if (frames.size > PAGE_CACHE) frames.delete(frames.keys().next().value!);
+    return fresh;
+  }
   // A process still running or starting for the session is stopped first, so none is left bound to a deleted directory.
   const remove = (key: string) => inTurn(lifecycle, key, async () => {
     const dir = sessionDir(key);
@@ -378,7 +394,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), snapshot: (key) => snapshotFrames(sessionDir(key)), stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
+  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), snapshot: pageFrames, stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
