@@ -82,3 +82,59 @@ test('an unreadable store is a 502 and a missing session a 404, both problem+jso
     await d.close();
   }
 });
+
+test('a reopen of an unchanged stopped session reuses its page frames, and a write to its store reads them again', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage('one'), fauxAssistantMessage('two')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const dir = await sessionDir('paged');
+  const ask = async (text: string, id: string) => {
+    const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id } } });
+    await session.submit(text, id, true);
+    await session.close();
+  };
+  await ask('first question', 'r-1');
+  const driver = processDriver({ command: [], dataDir });
+  const first = await driver.snapshot('paged');
+  assert.equal(await driver.snapshot('paged'), first, 'an unchanged store is not copied again');
+  await ask('second question', 'r-2');
+  const second = await driver.snapshot('paged');
+  assert.notEqual(second, first);
+  assert.match(JSON.stringify(second), /second question/);
+});
+
+test('a store written without a close moves its log, so the next snapshot reads the new message', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage('one'), fauxAssistantMessage('two')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await sessionDir('open'), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const driver = processDriver({ command: [], dataDir });
+  try {
+    await session.submit('first question', 'r-1', true);
+    const first = await driver.snapshot('open');
+    await session.submit('second question', 'r-2', true);
+    const second = await driver.snapshot('open');
+    assert.notEqual(second, first);
+    assert.match(JSON.stringify(second), /second question/);
+  } finally {
+    await session.close();
+  }
+});
+
+test('opens of one cold session share a single read of its store', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage('one')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await sessionDir('cold'), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  await session.submit('a question', 'r-1', true);
+  await session.close();
+  const driver = processDriver({ command: [], dataDir });
+  const [a, b] = await Promise.all([driver.snapshot('cold'), driver.snapshot('cold')]);
+  assert.equal(a, b);
+});

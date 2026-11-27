@@ -39,7 +39,7 @@ export type HostDriver = {
   pinned(key: string): Promise<{ version?: number; retention?: { idleDays: number } }>;
   /** The session's export read from its store on disk, starting nothing; rejects when the store cannot be read. */
   exported(key: string): Promise<SessionExport>;
-  /** The frames a page socket on the session opens with, read from its store on disk, starting nothing. */
+  /** The frames a page socket on the session opens with, from its store on disk or a cache of it, starting nothing; shared between callers, so never mutated. */
   snapshot(key: string): Promise<object[]>;
   /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
@@ -74,6 +74,10 @@ export async function writeLaunchToken(dir: string): Promise<string> {
 export const LISTENER_TOKEN_FILE = '.listener-token';
 export const writeListenerToken = (dir: string, token: string) => writeFile(join(dir, LISTENER_TOKEN_FILE), token, { mode: 0o600 });
 
+// The store and its write-ahead log: a write not yet in the store moves the log's stat. The read itself leaves an empty log, which holds nothing.
+const STORE_FILES = ['session.sqlite', 'session.sqlite-wal'];
+// shortcut: the most recently opened stopped sessions' frames stay in memory, 460 KB for prod's largest store; raise if reopens miss.
+const PAGE_CACHE = 16;
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
 /** The agent definition a session was pinned to; the file does not exist for a session with no agent. */
@@ -358,12 +362,28 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return found.filter((w) => w !== undefined);
   }
 
+  // A stopped session's store does not change, so its frames are kept by the store's stat; one with a process is still writing and is read fresh.
+  // Opens that arrive while a read is in flight share it, failure included, as `starting` does for a launch.
+  const cached = new Map<string, { stamp: string; read: Promise<object[]> }>();
+  async function pageFrames(key: string): Promise<object[]> {
+    const dir = sessionDir(key);
+    if (children.has(key) || starting.has(key)) return snapshotFrames(dir);
+    const stamp = (await Promise.all(STORE_FILES.map((f) => stat(join(dir, f), { bigint: true }).then((s) => (s.size ? `${s.mtimeNs}:${s.size}` : '-'), () => '-')))).join('/');
+    const hit = cached.get(key);
+    cached.delete(key);
+    const entry = hit?.stamp === stamp ? hit : { stamp, read: snapshotFrames(dir) };
+    cached.set(key, entry);
+    if (cached.size > PAGE_CACHE) cached.delete(cached.keys().next().value!);
+    entry.read.catch(() => { if (cached.get(key) === entry) cached.delete(key); });
+    return entry.read;
+  }
   // A process still running or starting for the session is stopped first, so none is left bound to a deleted directory.
   const remove = (key: string) => inTurn(lifecycle, key, async () => {
     const dir = sessionDir(key);
     if ((await readText(join(dir, 'session-key'))) === undefined) return false;
     await stopNow(key);
     await rm(dir, { recursive: true, force: true });
+    cached.delete(key);
     return true;
   });
 
@@ -378,7 +398,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), snapshot: (key) => snapshotFrames(sessionDir(key)), stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
+  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), snapshot: pageFrames, stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
