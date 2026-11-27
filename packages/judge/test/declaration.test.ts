@@ -111,7 +111,7 @@ test('a bool pitfall asked as the defect holds on "no": a confident yes flags th
   const decl: Declaration = { scopes: { rows: scope }, checks: { broken: { scope: 'rows', question: { type: 'bool', instructions: 'Is it broken?', pass: ['no'] }, aggregate: { name: 'share' } } } };
   const v = await rejudge(api, opts(rubricOf('broken', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['Is it broken?']);
-  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows a: flagged by clef (no reason given); re-verify it against the cited source before rewording it', 'rows c: fine']]);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows a: flagged by clef (no reason given)', 'rows c: fine']]);
 });
 
 // A tool call's api as the judge reads it: memos, a decision model answering by question number and a judge model, with every request recorded.
@@ -162,7 +162,7 @@ test('a pitfall decided by one failing item skips the escalation the other unsur
   assert.deepEqual(requests[0].state, { context: { guide: { rule: 'r' } }, asks: ['Does it keep the rule?'], items: [{ id: 'rows a', row: { id: 'a' } }, { id: 'rows b', row: { id: 'b' } }, { id: 'rows c', row: { id: 'c' } }] });
   assert.deepEqual(escalated, [], 'the fold had decided, so nothing escalated');
   const k = v.checks[0];
-  assert.deepEqual([k.met, k.notes, k.undecidedItems, k.resolvers, k.splitter], [true, ['rows a: flagged by clef (no reason given); re-verify it against the cited source before rewording it'], ['rows b'], { clef: 2 }, 'jsonItems']);
+  assert.deepEqual([k.met, k.notes, k.undecidedItems, k.resolvers, k.splitter], [true, ['rows a: flagged by clef (no reason given)'], ['rows b'], { clef: 2 }, 'jsonItems']);
   assert.equal(v.passed, false);
   assert.deepEqual(v.undecided, []);
 });
@@ -186,7 +186,7 @@ test('a choice question holds on its pass options, from the decision model or th
   const decl: Declaration = { scopes: { rows: scope }, checks: { grade: { scope: 'rows', question, aggregate: { name: 'share', pass: ['good', 'fine'] } } } };
   const v = await rejudge(api, opts(rubricOf('grade', 3), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['Grade it.'], 'c is a coin toss between holding and not, so it escalates');
-  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it']]);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given)']]);
 });
 
 test('a declaration that misses a check or misconfigures decisionModel is refused', async () => {
@@ -241,7 +241,7 @@ test('a share pitfall asks every unsure item even after a flag, and costs its we
   const v = await rejudge(api, opts({ ...rubricOf('kept', -3), criteria: [{ id: 'c', checks: [{ id: 'kept', label: 'kept', weight: -3 }, { id: 'good', label: 'good', weight: 4, code: () => ({ met: 1 }) }] }] }, decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['Does it keep the rule?'], 'b still escalates: the share is not known until it is answered');
   const k = v.checks.find((c) => c.id === 'kept')!;
-  assert.deepEqual([k.met, k.notes, k.undecidedItems], [1 / 3, ['rows a: flagged by clef (no reason given); re-verify it against the cited source before rewording it'], undefined]);
+  assert.deepEqual([k.met, k.notes, k.undecidedItems], [1 / 3, ['rows a: flagged by clef (no reason given)'], undefined]);
   assert.deepEqual([v.score, v.passed], [(4 - 3 / 3) / 4, false]);
   const silent = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => 'no idea');
   const u = await rejudge(silent.api, opts(rubricOf('kept', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);

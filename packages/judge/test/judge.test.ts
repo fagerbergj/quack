@@ -218,18 +218,20 @@ const answeredPlan = (id: string, weight: number, answers: Array<boolean | null>
 
 test('a failing item Clef answered without a reason is still named in the notes', () => {
   const [why, pref, takeaway] = settled([answeredPlan('says_why', 3, [true, false]), answeredPlan('preference_only', -3, [false, true]), answeredPlan('takeaway', 2, [false], true)]);
-  const flag = 'flagged by clef (no reason given); re-verify it against the cited source before rewording it';
+  const flag = 'flagged by clef (no reason given)';
   assert.deepEqual([why.met, why.notes], [0.5, [`f2: ${flag}`]]);
   assert.deepEqual([pref.met, pref.notes], [0.5, [`f1: ${flag}`]], 'a pitfall names where it is present');
   assert.deepEqual(takeaway.notes, [flag]);
   assert.deepEqual(feedback([why]), [`missed c.says_why (1 of 2): f2: ${flag}`]);
 });
 
-test('a failing item Clef answered without a reason names the item text and says to re-verify, not reword', () => {
+test('a failing item Clef answered without a reason names the item text, and the fix only where its check declares one', () => {
   const plan = answeredPlan('says_why', 3, [false], true);
   plan.units[0].state = { finding: 'The second slice of #2060. ships in the beta channel, ahead of the stable release line' };
   const [r] = settled([plan]);
-  assert.deepEqual(r.notes, ['flagged by clef (no reason given): "The second slice of #2060. ships in the beta channel, ahead…"; re-verify it against the cited source before rewording it']);
+  assert.deepEqual(r.notes, ['flagged by clef (no reason given): "The second slice of #2060. ships in the beta channel, ahead…"']);
+  const [fixed] = settled([{ ...answeredPlan('says_why', 3, [false], true), fix: 're-read the cited code' }]);
+  assert.deepEqual(fixed.notes, ['flagged by clef (no reason given); re-read the cited code']);
 });
 
 test('a share over every unit met is exactly 1: units are counted, not summed as fractions', () => {

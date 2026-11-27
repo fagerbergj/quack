@@ -95,6 +95,8 @@ export type CheckDecl = {
   /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations.
    *  PASS_ONLY or CONFIDENT_ONLY: how the decision model's failing or unsure answers are taken, as each constant says. */
   decisionModel?: false | typeof PASS_ONLY | typeof CONFIDENT_ONLY;
+  /** What the note on an item flagged without a reason tells the writer to do, such as re-reading the cited code before rewording. */
+  fix?: string;
 };
 
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
