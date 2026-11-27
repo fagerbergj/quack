@@ -1,0 +1,39 @@
+name: lint-ratchet
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  oxlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Lint changed TS/JS files with Oxlint
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs')
+          if [ "${#files[@]}" -gt 0 ]; then
+            npx --yes oxlint --max-warnings 0 "${files[@]}"
+          fi
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10
+      - name: Lint and typecheck changed Python files
+        run: |
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- '*.py')
+          if [ "${#files[@]}" -gt 0 ]; then
+            uvx ruff check "${files[@]}"
+            uvx mypy "${files[@]}"
+          fi
