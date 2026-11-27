@@ -11,7 +11,13 @@ from uuid import UUID
 from rmscene import CrdtId, CrdtSequenceItem, write_blocks
 from rmscene import scene_items as si
 from rmscene.scene_stream import (
-    AuthorIdsBlock, MigrationInfoBlock, PageInfoBlock, SceneGroupItemBlock, SceneLineItemBlock, SceneTreeBlock, TreeNodeBlock,
+    AuthorIdsBlock,
+    MigrationInfoBlock,
+    PageInfoBlock,
+    SceneGroupItemBlock,
+    SceneLineItemBlock,
+    SceneTreeBlock,
+    TreeNodeBlock,
 )
 from rmscene.tagged_block_common import LwwValue
 

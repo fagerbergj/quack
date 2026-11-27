@@ -1,10 +1,11 @@
+# Formatter width target; E501 is ignored so long URLs/comments don't fight the formatter.
 line-length = 100
 target-version = "py313"
+force-exclude = true
 
 [lint]
-extend-select = ["E", "F", "I", "B", "UP", "SIM", "FURB", "RUF"]
+select = ["E", "F", "I", "B", "UP", "SIM", "FURB", "RUF"]
 ignore = ["E501"]
 
 [lint.per-file-ignores]
-"__init__.py" = ["F401", "E402"]
 "**/test/**" = ["S101"]
