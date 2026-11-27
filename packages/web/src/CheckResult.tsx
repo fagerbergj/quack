@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { checkFailed, type Check, type Verdict } from './api.ts';
-import { byWhom, CheckRow, Mark, type About } from './CheckList.tsx';
+import { byWhom, CheckRow, Mark } from './CheckList.tsx';
 
 export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
 
@@ -12,7 +12,7 @@ function headline(v: Verdict, failed: number): string {
 }
 
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
-export function CheckResult({ verdict, open, summary, about }: { verdict: Verdict; open: boolean; summary?: string; about?: About }) {
+export function CheckResult({ verdict, open, summary }: { verdict: Verdict; open: boolean; summary?: string }) {
   const failed = verdict.checks.filter(checkFailed);
   const later = verdict.checks.filter((c) => c.deferred === 'approval');
   const gated = verdict.checks.filter((c) => c.deferred === 'gate');
@@ -20,7 +20,7 @@ export function CheckResult({ verdict, open, summary, about }: { verdict: Verdic
   const group = (title: string, checks: Check[]) => checks.length > 0 && (
     <div className="flex flex-col">
       <h3 className="m-0 pt-1 text-[11.5px] font-semibold tracking-wide text-muted uppercase">{title}</h3>
-      {checks.map((c) => <CheckRow key={`${c.criterion}.${c.id}`} check={c} mark about={about} />)}
+      {checks.map((c) => <CheckRow key={`${c.criterion}.${c.id}`} check={c} mark />)}
     </div>
   );
   return (

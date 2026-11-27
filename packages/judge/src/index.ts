@@ -56,7 +56,7 @@ export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): Che
 
 /** One model check being judged: its units, the question asked of each, and the fold.
  *  `groupOf`: a grouped check's group key by unit id. */
-export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; groupOf?: Record<string, string> };
+export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; groupOf?: Record<string, string>; fix?: string };
 
 const modelChecks = (rubric: Rubric) => rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k) => k.id));
 
@@ -69,7 +69,7 @@ function planChecks(rubric: Rubric, decl: Declaration, built: BuiltEvidence): Pl
     const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}) };
     const ask: Ask = { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel !== undefined && { decisionModel: d.decisionModel }) };
     const groupOf = d.aggregate.name === 'grouped' ? { groupOf: built.groups?.[d.scope] ?? {} } : {};
-    return { key, result, ask, units, aggregate: d.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, ...groupOf };
+    return { key, result, ask, units, aggregate: d.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, ...groupOf, ...(d.fix && { fix: d.fix }) };
   }));
 }
 
@@ -94,17 +94,16 @@ function decided(p: Plan): boolean {
 // A grouped check's item is not asked once its own group has decided, either.
 const groupDecided = (p: Plan, u: Unit) => p.aggregate.name === 'grouped' && groupsOf(p).get(p.groupOf![u.id]) !== undefined;
 
-// Every failing item gets a note, even from a resolver that gives no reason (Clef never does): the item named, and the fix in the source,
-// not the wording, since rewording cannot change what the source says.
-const flaggedBy = (u: Unit, by: string) => {
+// Every failing item gets a note, even from a resolver that gives no reason (Clef never does): the item named, and the check's fix if it declares one.
+const flaggedBy = (u: Unit, by: string, fix?: string) => {
   const text = Object.values(u.state).find((v) => typeof v === 'string')?.replace(/\s+/g, ' ').trim();
   const item = text ? `: "${text.slice(0, 60).trim()}${text.length > 60 ? '…' : ''}"` : '';
-  return `flagged by ${by} (no reason given)${item}; re-verify it against the cited source before rewording it`;
+  return `flagged by ${by} (no reason given)${item}${fix ? `; ${fix}` : ''}`;
 };
 const whyOf = (p: Plan, u: Unit) => {
   const a = p.answers.get(u.id)!;
   const on = p.result.reused?.[u.id];
-  return `${a.note || flaggedBy(u, a.resolver)}${on ? ` (judged on v${on})` : ''}`;
+  return `${a.note || flaggedBy(u, a.resolver, p.fix)}${on ? ` (judged on v${on})` : ''}`;
 };
 const noteOf = (p: Plan, u: Unit) => (u.whole ? whyOf(p, u) : `${u.id}: ${whyOf(p, u)}`);
 

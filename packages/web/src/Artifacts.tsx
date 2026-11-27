@@ -65,7 +65,7 @@ export function LedgerItem({ a, round, draft, running, onOpen, markOf = byVerdic
         <button type="button" aria-label={`Open ${artifactName(a)} ${detail}`} onClick={() => onOpen(a)} className={link}>Open</button>
         {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
-      {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open about={a} />}
+      {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open />}
     </div>
   );
 }

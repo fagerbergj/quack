@@ -57,13 +57,13 @@ test('inner and outer folds combine: each group folds its items, the outer rule 
 test("a failing group's note names the group once, with the reason of its first failing item, and a reused one says when it was judged", async () => {
   const { api } = sessionApi(clef, () => said('no'));
   const opts = optsOf(declOf(grouped('any', 'all')), abc);
-  assert.deepEqual((await round(api, opts, 1)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it']);
-  assert.deepEqual((await round(api, opts, 2)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)']);
+  assert.deepEqual((await round(api, opts, 1)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given)']);
+  assert.deepEqual((await round(api, opts, 2)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given) (judged on v1)']);
 });
 
 test('a group of one item takes that item\'s answer, and a group whose every item dropped is no group at all', async () => {
   const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('all', 'all')), [['a1t', 'A'], ['b1f', 'B']]));
-  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [false, ['B: rows b1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it']]);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [false, ['B: rows b1f: flagged by clef (no reason given)']]);
   const dropped = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all')), [['a1t', 'A'], ['a2f', 'A'], ['drop1f', 'E']]));
   assert.deepEqual([dropped.checks[0].met, dropped.checks[0].units, dropped.checks[0].notes], [true, 2, []]);
   const empty = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all')), []));
@@ -83,10 +83,10 @@ test('an item without a string or number group key is an extension error naming 
 
 test("a grouped share's feedback counts groups, not items, and only when there is more than one", async () => {
   const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'share')), abc));
-  assert.deepEqual(feedback(v.checks), ['missed c.kept (2 of 3): C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it'], 'groups A and B held; not "4 of 6" items');
+  assert.deepEqual(feedback(v.checks), ['missed c.kept (2 of 3): C: rows c1f: flagged by clef (no reason given)'], 'groups A and B held; not "4 of 6" items');
   assert.equal(v.checks[0].groups, 3);
   const one = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'share')), [['c1f', 'C'], ['c2f', 'C']]));
-  assert.deepEqual([one.checks[0].groups, feedback(one.checks)], [1, ['missed c.kept: C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it']]);
+  assert.deepEqual([one.checks[0].groups, feedback(one.checks)], [1, ['missed c.kept: C: rows c1f: flagged by clef (no reason given)']]);
 });
 
 test('groups is absent on a flat fold and when no item applies', async () => {

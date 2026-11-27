@@ -193,8 +193,7 @@ test('a clean report passes on Clef alone; one wordy phrase still passes; a repo
     ['wordy_phrase', 0, { clef: 1 }],
     ['list_not_parallel', 0, { clef: 1 }],
   ]);
-  // TODO(research-style): #2565 rewords the judge's reasonless-flag tail for style checks; update this assertion with it.
-  assert.match(messy.checks[4].notes[0], /^wordy_phrase phrase-1: flagged by clef \(no reason given\): "⟦In order to⟧ rest/);
+  assert.match(messy.checks[4].notes[0], /^wordy_phrase phrase-1: flagged by clef \(no reason given\): "⟦In order to⟧ rest[^;]*$/, 'a style flag carries no source tail');
 });
 
 test('every style unit of the fixture reports fits Clef\'s window', () => {

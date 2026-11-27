@@ -59,6 +59,8 @@ const yes = (instructions: string): Question => ({ type: 'bool', instructions })
 // share flagged, and a Verified item that only lists what was read is not mistaken for an unbacked claim.
 const defect = (instructions: string): Question => ({ type: 'bool', instructions, pass: ['no'] });
 const SHARE = { name: 'share' } as const;
+// A finding the cited code does not bear out is fixed by reading the code again; rewording leaves it wrong.
+const REREAD = 're-read the cited code before rewording the finding';
 
 // Findings of every label see the CI result, the same for all, so a review's findings pack into few decision-model requests.
 const findings = (where: 'truthy' | 'falsy'): Scope => ({
@@ -191,10 +193,10 @@ export const reviewDeclaration: Declaration = {
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
     promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Is the behaviour this sentence of the pull request description says the change has either present in the `diff`, deferred to a linked follow-up, reported in the `review` as a blocking finding, or intentionally not delivered with the `review` explaining why the promise was walked back? A sentence that describes the problem or the state before this change, rather than what the change does, holds.') },
     // A finding holds when every line it cites shows what it says there; a contradiction is the plainest way it does not.
-    matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?') },
+    matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?'), fix: REREAD },
     // An item that names a source holds in code, so Clef is asked only of items that name none.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
-    anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
+    anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?'), fix: REREAD },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: yes("Would merging this change as it stands cause the harm this blocking finding's anchor names: wrong output, a crash or data loss (defect), promised behaviour missing (delivery), a security hole, a named design principle broken (design), work outside the change's purpose (scope), or a missing or broken test (tests)? Answer no when the finding asks for a nit, an edit to the pull request description, a doc or a comment, a follow-up, or tooling polish.") },
     wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Does this finding, though not labelled blocking, describe wrong output, a crash or data loss?') },
   },

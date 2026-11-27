@@ -7,12 +7,7 @@ import { Blurb } from './Markdown.tsx';
 const wholeUnits = () => EXTENSIONS.flatMap((e) => e.wholeUnits ?? []);
 const UNIT = /^([A-Za-z0-9_.-]{1,12}): ([\s\S]*)$/;
 
-/** The version a verdict judged, so an extension can read a note's item against it. */
-export type About = { kind: string; content?: string };
-
-export function Note({ text, scope, about }: { text: string; scope?: string; about?: About }) {
-  const drawn = about?.content === undefined ? undefined : EXTENSIONS.map((e) => e.note?.(about.kind, about.content!, text)).find(Boolean);
-  if (drawn) return drawn;
+export function Note({ text, scope }: { text: string; scope?: string }) {
   const m = UNIT.exec(text);
   const unit = m && m[1] !== scope && !wholeUnits().includes(m[1]!) ? m[1] : undefined;
   const body = m ? m[2]! : text;
@@ -79,7 +74,7 @@ function Notes({ notes }: { notes: ReactNode[] }) {
 }
 
 /** One check: its mark, label and fail count, expanding to its failing items and who settled its items. A failed check starts open. */
-export function CheckRow({ check, mark, about }: { check: Check; mark?: boolean; about?: About }) {
+export function CheckRow({ check, mark }: { check: Check; mark?: boolean }) {
   const line = resolverLine(check);
   const head = (
     <>
@@ -93,7 +88,7 @@ export function CheckRow({ check, mark, about }: { check: Check; mark?: boolean;
     <details open={checkFailed(check)}>
       <summary className={summary}>{head}{chevron}</summary>
       <div className={`flex flex-col gap-2 pb-2 ${mark ? 'pl-6' : ''}`}>
-        <Notes notes={check.notes.map((n, i) => <Note key={i} text={n} scope={check.scope} about={about} />)} />
+        <Notes notes={check.notes.map((n, i) => <Note key={i} text={n} scope={check.scope} />)} />
         {line && <p title={line.tip} className="m-0 text-[12px] text-muted">{line.text}</p>}
       </div>
     </details>
