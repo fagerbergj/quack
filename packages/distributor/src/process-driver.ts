@@ -363,7 +363,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
 
   // A stopped session's store does not change, so its frames are kept by the store's stat; one with a process is still writing and is read fresh.
-  // Opens that arrive while a read is in flight share it, failure included, as `starting` does for a launch.
+  // Opens during a read share it, as `starting` does for a launch; a failed read is dropped for the next open to retry, unless a newer entry replaced it.
   const cached = new Map<string, { stamp: string; read: Promise<object[]> }>();
   async function pageFrames(key: string): Promise<object[]> {
     const dir = sessionDir(key);
