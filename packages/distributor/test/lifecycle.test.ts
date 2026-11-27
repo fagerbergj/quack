@@ -153,3 +153,12 @@ test('a woken session keeps its pinned prompt but runs the current model and jud
   await assert.rejects(driver.ensure('contracts:a'), /runs agent contracts, which is no longer installed/);
   assert.equal(launches.length, 2, 'nothing starts without the current bundle');
 });
+
+test('a session with a process is read from its store on every page open, not from the cache', async () => {
+  const { driver } = await host();
+  await driver.ensure('research:live');
+  assert.deepEqual(driver.running(), ['research:live']);
+  // A read never moves the store's stat, so only the bypass makes two opens of an unchanged store differ.
+  const a = await driver.snapshot('research:live');
+  assert.notEqual(await driver.snapshot('research:live'), a);
+});
