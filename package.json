@@ -14,6 +14,7 @@
     "test": "npm run test:node && npm test -w @quack/web",
     "test:node": "node --test --import ./tools/leak-check.ts --test-timeout=30000 ${TEST_SHARD:+--test-shard=$TEST_SHARD} 'packages/*/test/*.test.ts' 'tools/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/web/tsconfig.json",
+    "lint:ts": "node tools/oxlint-diff.ts",
     "sloplint": "node tools/sloplint.ts"
   },
   "devDependencies": {

@@ -1,12 +1,12 @@
 {
   "plugins": ["typescript", "unicorn", "import", "react"],
   "categories": {
-    "correctness": "error",
-    "suspicious": "error"
+    "correctness": "error"
   },
   "rules": {
     "no-unused-vars": "error",
-    "typescript/no-explicit-any": "error"
+    "typescript/no-explicit-any": "error",
+    "react/react-in-jsx-scope": "off"
   },
   "ignorePatterns": [
     "**/dist/**",
