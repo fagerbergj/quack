@@ -29,6 +29,26 @@ jobs:
       # Gates only lines this change touches.
       - if: github.event_name == 'pull_request'
         run: npm run sloplint -- diff origin/${{ github.base_ref }}
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: npm run lint:ts -- "origin/${BASE_REF}"
+      - if: github.event_name == 'pull_request'
+        uses: astral-sh/setup-uv@v10.4.0
+      - if: github.event_name == 'pull_request'
+        name: Lint and typecheck changed Python files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git rev-parse --verify "origin/${BASE_REF}" >/dev/null
+          mapfile -t -d '' files < <(git diff -z --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD" -- '*.py')
+          if [ "${#files[@]}" -gt 0 ]; then
+            uvx ruff@0.17.6 check "${files[@]}"
+            uv venv /tmp/mypy-env --python 3.13
+            uv pip install --python /tmp/mypy-env/bin/python --no-deps mypy==2.4.1 -r packages/remarkable/requirements.txt
+            uv pip install --python /tmp/mypy-env/bin/python mypy==2.4.1
+            /tmp/mypy-env/bin/mypy "${files[@]}"
+          fi
 
   web:
     runs-on: ubuntu-latest
